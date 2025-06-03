@@ -115,8 +115,9 @@ func NewProdClient(conf Config) (*Client, error) {
 type BuyCoinRequest struct {
 	MerchantOrderID string
 
-	Amount   decimal.Decimal
-	Currency string
+	PayAmount   decimal.Decimal
+	PayCurrency string
+	CoinAmount  decimal.Decimal
 
 	CustomerAreaCode string
 	CustomerPhone    string
@@ -128,22 +129,22 @@ func (raw *BuyCoinRequest) Validate() error {
 		return ErrInvalidMerchantOrderID
 	}
 
-	if raw.Amount.LessThanOrEqual(decimal.Zero) {
+	if raw.PayAmount.LessThanOrEqual(decimal.Zero) {
 		return errors.New("amount must be greater than zero")
 	}
 
-	amount := raw.Amount.Truncate(0)
-	if !amount.Equal(raw.Amount) {
+	amount := raw.PayAmount.Truncate(0)
+	if !amount.Equal(raw.PayAmount) {
 		return ErrInvalidAmount
 	}
 
-	if raw.Currency == "" {
+	if raw.PayCurrency == "" {
 		return ErrInvalidCurrency
 	}
 
 	currencyAllow := false
 	for _, allow := range []string{"CNY", "VND"} {
-		if strings.EqualFold(raw.Currency, allow) {
+		if strings.EqualFold(raw.PayCurrency, allow) {
 			currencyAllow = true
 			break
 		}
@@ -164,19 +165,21 @@ func (raw *BuyCoinRequest) Validate() error {
 
 func (req *BuyCoinRequest) toRaw(conf *Config) *rawBuyPayload {
 	return &rawBuyPayload{
-		CompanyID:       conf.MerchantID,
-		KYCLevel:        "2",
-		UserName:        req.CustomerName,
 		AreaCode:        req.CustomerAreaCode,
-		Phone:           req.CustomerPhone,
-		OrderType:       OrderTypeBuy,
-		CompanyOrderNum: req.MerchantOrderID,
+		CoinAmount:      req.CoinAmount.StringFixed(0),
 		CoinSign:        CoinSignUSDT,
-		PayCoinSign:     strings.ToLower(req.Currency),
-		Total:           req.Amount.StringFixed(0),
+		CompanyOrderNum: req.MerchantOrderID,
+		OrderPayChannel: OrderPayChannel_BankCard,
 		OrderTime:       time.Now(),
-		SyncURL:         conf.RedirectURL,
-		AsyncUrl:        conf.CallbackURL,
+		OrderType:       OrderTypeBuy,
+		PayCoinSign:     strings.ToLower(req.PayCurrency),
+		Phone:           req.CustomerPhone,
+		Total:           req.PayAmount.StringFixed(0),
+		UserName:        req.CustomerName,
+
+		CompanyID: conf.MerchantID,
+		SyncURL:   conf.RedirectURL,
+		AsyncUrl:  conf.CallbackURL,
 	}
 }
 

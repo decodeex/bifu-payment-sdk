@@ -101,7 +101,7 @@ type rawBuyPayload struct {
 	// 商户id
 	CompanyID string `json:"companyId"`
 	// 用户验证级别
-	KYCLevel string `json:"kyc" default:"2"`
+	KYCLevel string `json:"-"` // `json:"kyc" default:"2"`
 	// 真实姓名(接受简体中文和繁体中文与英文，中国客户一般为姓在前名在后，中间不留空格，建议传输中文字。username 根据payCoinSign 使用以下两种pattern:1.cny:([\s·\u4e00-\u9fa5]{2,15})\|([\s·A-Za-z]{2,35})2.vnd_false :.[`~!@#$%^&()+=|{}':;',[].<>?~！@#￥%……&（）——+|{}【】‘；：”“’。，、？\\d]+.如果字符串中包含这些特殊字符或数字，则会报错。 )
 	// 中文2-15位;英文2-35位
 	UserName string `json:"username"`
@@ -110,19 +110,19 @@ type rawBuyPayload struct {
 	// 手机号
 	Phone string `json:"phone"`
 	// 用户邮箱，只支持当payCoinSign为vnd时传输，phone或者email需择一传输
-	Email string `json:"email,omitempty"`
+	Email string `json:"-"` // `json:"email,omitempty"`
 	// 订单类型 1.快捷买单 2.快捷卖单
 	OrderType OrderType `json:"orderType"`
 	// 证件类型(1.身份证 2.护照 3.其他)
-	IDCardType IDCardType `json:"idCardType,omitempty"`
+	IDCardType IDCardType `json:"-"` // `json:"idCardType,omitempty"`
 	// 证件号码
-	IDCardNum string `json:"idCardNum,omitempty"`
+	IDCardNum string `json:"-"` // `json:"idCardNum,omitempty"`
 	// 银行卡号（快捷卖单必填）
-	PayCardNo string `json:"payCardNo,omitempty"`
+	PayCardNo string `json:"-"` // `json:"payCardNo,omitempty"`
 	// 开户银行（快捷卖单必填）,当payCoinSign为vnd时需准确填入银行名称, 参考[vnd区银行名称](https://open-v2.chippay.com/api/cnAPI.html#vnd_bank_area)
-	PayCardBank string `json:"payCardBank,omitempty"`
+	PayCardBank string `json:"-"` // `json:"payCardBank,omitempty"`
 	// 开户支行
-	PayCardBranch string `json:"payCardBranch,omitempty"`
+	PayCardBranch string `json:"-"` // `json:"payCardBranch,omitempty"`
 	// 商户订单号
 	CompanyOrderNum string `json:"companyOrderNum"`
 	// 数字货币标识(USDT)
@@ -138,7 +138,7 @@ type rawBuyPayload struct {
 	// 当payCoinSign为cny时买单支持2.支付宝 , 3.银行卡方式，卖单支持 3.Bank card方式。payCoinSign为vnd时买单支持 1.MOMO , 3.Bank card 方式，卖单支持 3.Bank card 方式。
 	OrderPayChannel OrderPayChannel `json:"orderPayChannel,omitempty" default:"3"`
 	// 客户自定义单价（最多接收四位小数）详见[交易规则&常见问题](https://open-v2.chippay.com/api/cnAPI.html#trading_rules)
-	DisplayUnitPrice string `json:"displayUnitPrice,omitempty"`
+	DisplayUnitPrice string `json:"-"` // `json:"displayUnitPrice,omitempty"`
 	// 订单时间戳（使用当前时间戳，与当前时间相差5分钟视为无效）, 单位毫秒
 	OrderTime time.Time `json:"orderTime"`
 	// 同步返回地址 (用户完成或取消交易后返回至商户平台的地址)
@@ -149,7 +149,7 @@ type rawBuyPayload struct {
 	Signature string `json:"sign"`
 
 	// 生成sign时使用, 同时用于序列化
-	params map[string]string
+	params map[string]string `json:"-"` //
 }
 
 func (raw *rawBuyPayload) MarshalJSON() ([]byte, error) {
@@ -163,48 +163,20 @@ func (raw *rawBuyPayload) MarshalJSON() ([]byte, error) {
 
 func (raw *rawBuyPayload) serializeToMap() map[string]string {
 	params := make(map[string]string)
-	params["companyId"] = raw.CompanyID
-	params["kyc"] = raw.KYCLevel
-	params["username"] = raw.UserName
-	if raw.AreaCode != "" {
-		params["areaCode"] = raw.AreaCode
-	}
-	params["phone"] = raw.Phone
-	if raw.Email != "" {
-		params["email"] = raw.Email
-	}
-	params["orderType"] = raw.OrderType
-	if raw.IDCardType != 0 {
-		params["idCardType"] = strconv.Itoa(raw.IDCardType)
-	}
-	if raw.IDCardNum != "" {
-		params["idCardNum"] = raw.IDCardNum
-	}
-	if raw.PayCardNo != "" {
-		params["payCardNo"] = raw.PayCardNo
-	}
-	if raw.PayCardBank != "" {
-		params["payCardBank"] = raw.PayCardBank
-	}
-	if raw.PayCardBranch != "" {
-		params["payCardBranch"] = raw.PayCardBranch
-	}
-	params["companyOrderNum"] = raw.CompanyOrderNum
-	params["coinSign"] = string(raw.CoinSign)
-	params["payCoinSign"] = string(raw.PayCoinSign)
-	params["coinAmount"] = raw.CoinAmount
-	if raw.Total != "" {
-		params["total"] = raw.Total
-	}
-	if raw.OrderPayChannel != 0 {
-		params["orderPayChannel"] = strconv.Itoa(raw.OrderPayChannel)
-	}
-	if raw.DisplayUnitPrice != "" {
-		params["displayUnitPrice"] = raw.DisplayUnitPrice
-	}
-	params["orderTime"] = strconv.FormatInt(raw.OrderTime.UnixMilli(), 10)
-	params["syncUrl"] = raw.SyncURL
+	params["areaCode"] = raw.AreaCode
 	params["asyncUrl"] = raw.AsyncUrl
+	params["coinAmount"] = raw.CoinAmount
+	params["coinSign"] = string(raw.CoinSign)
+	params["companyId"] = raw.CompanyID
+	params["companyOrderNum"] = raw.CompanyOrderNum
+	params["orderPayChannel"] = strconv.Itoa(raw.OrderPayChannel)
+	params["orderTime"] = strconv.FormatInt(raw.OrderTime.UnixMilli(), 10)
+	params["orderType"] = raw.OrderType
+	params["payCoinSign"] = string(raw.PayCoinSign)
+	params["phone"] = raw.Phone
+	params["syncUrl"] = raw.SyncURL
+	params["total"] = raw.Total
+	params["username"] = raw.UserName
 	return params
 }
 
