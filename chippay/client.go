@@ -19,6 +19,9 @@ import (
 const (
 	_DEV_BASE_URL  = "https://open-v2.chippaytest.com"
 	_PROD_BASE_URL = "https://open-v2.chippay.com"
+
+	_DEV_PUB_KEY_STR  = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCBjEj/DylMlxONCDkkZQxh+woiD4goiG5WM+Ju3V2hmJpjpGCqXDClf4TLTymZMyM4GF0JL1euwgaacZ/pcxVHXpyGg8UstFUPrw7SStYURk4CLIWjuCrzZwALLGFQFNxQGFsXCR1WwpE08byw0asTWTL4VB9YlYRiV8huB/gcqwIDAQAB"
+	_PROD_PUB_KEY_STR = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCPV284s9ydOOZGCUFIw1/0d2mtC2XX8Y6oFVYtBqhno5hhI9qzUOZ+U2Raqfu8JAcbxqXaVX7MUjxlSWSHOJ5X2yiQ5GsNgNvpTKlOnv37iC/iJdajaqzyxC1mDfW+M8X6IQsWyvoRkNZ8V8WfmCPtFL7viGPbE9XKZfZApZRgXwIDAQAB"
 )
 
 type Env int
@@ -39,16 +42,51 @@ func (e Env) baseURL() string {
 	}
 }
 
+func (e Env) PublicKey() *rsa.PublicKey {
+	switch e {
+	case EnvDev:
+		return _DEV_PUBLIC_KEY
+	case EnvProd:
+		return _PROD_PUBLIC_KEY
+	default:
+		return _DEV_PUBLIC_KEY
+	}
+}
+
+var (
+	_DEV_PUBLIC_KEY  = mustDecodePublicKey(_DEV_PUB_KEY_STR)
+	_PROD_PUBLIC_KEY = mustDecodePublicKey(_PROD_PUB_KEY_STR)
+)
+
+func mustDecodePublicKey(base64Key string) *rsa.PublicKey {
+	pubKeyBytes, err := base64.StdEncoding.DecodeString(base64Key)
+	if err != nil {
+		panic(fmt.Errorf("failed to decode public key: %w", err))
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(pubKeyBytes)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse public key: %w", err))
+	}
+	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		panic(errors.New("invalid public key type"))
+	}
+	return rsaPubKey
+}
+
 type Config struct {
 	MerchantID string
-	PublicKey  string
 	PrivateKey string
 
 	CallbackURL string
 	RedirectURL string
 
 	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
+	env        Env
+}
+
+func (c *Config) PublicKey() *rsa.PublicKey {
+	return c.env.PublicKey()
 }
 
 type Client struct {
@@ -75,31 +113,18 @@ func NewClient(env Env, config Config) (*Client, error) {
 		return nil, errors.New("invalid private key type")
 	}
 
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(config.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode public key: %w", err)
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(pubKeyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
-	}
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("invalid public key type")
-	}
-
 	return &Client{
 		http: &http.Client{
 			Transport: transport,
 		},
 		config: &Config{
 			MerchantID:  config.MerchantID,
-			PublicKey:   config.PublicKey,
 			PrivateKey:  config.PrivateKey,
 			CallbackURL: config.CallbackURL,
 			RedirectURL: config.RedirectURL,
 			privateKey:  rsaPriKey,
-			publicKey:   rsaPubKey,
+
+			env: env,
 		},
 	}, nil
 }

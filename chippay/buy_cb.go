@@ -92,7 +92,7 @@ func (req *BuyCoinCallbackRequest) VerifySignature(conf *Config) error {
 		return fmt.Errorf("raw payload is nil")
 	}
 
-	return req.data.VerifySignature(conf.publicKey)
+	return req.data.VerifySignature(conf.PublicKey())
 }
 
 func (req *BuyCoinCallbackRequest) IsSuccess() bool {
