@@ -121,24 +121,24 @@ type rawBuyCoinCallbackResponseData struct {
 	CompanyOrderNum string `json:"companyOrderNum"`
 }
 
-type rawBuyCoinCallbackResponse struct {
-	Code    StatusCode                     `json:"code"`
-	Msg     string                         `json:"msg"`
-	Data    rawBuyCoinCallbackResponseData `json:"data"`
-	Success bool                           `json:"success"`
+type rawCallbackResponse[T any] struct {
+	Code    StatusCode `json:"code"`
+	Msg     string     `json:"msg"`
+	Data    *T         `json:"data,omitempty"`
+	Success bool       `json:"success"`
 }
 
 type BuyCoinCallbackReply struct {
-	data *rawBuyCoinCallbackResponse
+	data *rawCallbackResponse[rawBuyCoinCallbackResponseData]
 }
 
 func (req *BuyCoinCallbackRequest) GenerateReply() *BuyCoinCallbackReply {
 	return &BuyCoinCallbackReply{
-		data: &rawBuyCoinCallbackResponse{
+		data: &rawCallbackResponse[rawBuyCoinCallbackResponseData]{
 			Code:    StatusCodeSuccess,
 			Msg:     "success",
 			Success: true,
-			Data: rawBuyCoinCallbackResponseData{
+			Data: &rawBuyCoinCallbackResponseData{
 				OtcOrderNum:     req.data.OtcOrderNum,
 				CompanyOrderNum: req.data.CompanyOrderNum,
 			},
@@ -147,6 +147,132 @@ func (req *BuyCoinCallbackRequest) GenerateReply() *BuyCoinCallbackReply {
 }
 
 func (reply *BuyCoinCallbackReply) WriteTo(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	return json.NewEncoder(w).Encode(reply.data)
+}
+
+type rawIntentOrderCallbackPayload struct {
+	CoinAmount      string      `json:"coinAmount"`      // 订单币种数量, bigDecimal to string type
+	CoinSign        string      `json:"coinSign"`        // 数字货币标识：5.usdt
+	CompanyOrderNum string      `json:"companyOrderNum"` // 商户订单号
+	IntentOrderNo   string      `json:"intentOrderNo"`   // 平台自选订单号
+	Sign            string      `json:"sign"`            // 参数签名
+	SuccessAmount   string      `json:"successAmount"`   // 数字货币到账数量, bigDecimal to string type
+	Total           string      `json:"total"`           // 用户付款的法币实际到账金额, bigDecimal to string type
+	TradeOrderTime  string      `json:"tradeOrderTime"`  // 自选订单创建时间 (北京时间)
+	TradeStatus     TradeStatus `json:"tradeStatus"`     // 交易状态(0:交易失败1:交易成功)
+	UnitPrice       string      `json:"unitPrice"`       // 数字货币单价, bigDecimal to string type
+}
+
+func (payload *rawIntentOrderCallbackPayload) VerifySignature(publicKey *rsa.PublicKey) error {
+	return signer{}.Verify(publicKey, payload.serializeToMap(), payload.Sign)
+}
+
+func (payload *rawIntentOrderCallbackPayload) serializeToMap() map[string]string {
+	params := make(map[string]string)
+	params["coinAmount"] = payload.CoinAmount
+	params["coinSign"] = payload.CoinSign
+	params["companyOrderNum"] = payload.CompanyOrderNum
+	params["intentOrderNo"] = payload.IntentOrderNo
+	params["tradeStatus"] = payload.TradeStatus
+	params["tradeOrderTime"] = payload.TradeOrderTime
+	params["unitPrice"] = payload.UnitPrice
+	params["total"] = payload.Total
+	params["successAmount"] = payload.SuccessAmount
+	return params
+}
+
+type IntentOrderCallbackRequest struct {
+	data *rawIntentOrderCallbackPayload
+
+	total decimal.Decimal
+}
+
+func (req *IntentOrderCallbackRequest) MerchantOrderID() string {
+	return req.data.CompanyOrderNum
+}
+
+func (req *IntentOrderCallbackRequest) Amount() decimal.Decimal {
+	return req.total
+}
+
+func (req *IntentOrderCallbackRequest) Status() TradeStatus {
+	return req.data.TradeStatus
+}
+
+func (req *IntentOrderCallbackRequest) SupplierOrderCode() string {
+	return req.data.IntentOrderNo
+}
+func (req *IntentOrderCallbackRequest) VerifySignature(conf interface {
+	PublicKey() *rsa.PublicKey
+}) error {
+	if conf == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if req == nil || req.data == nil {
+		return fmt.Errorf("raw payload is nil")
+	}
+
+	return req.data.VerifySignature(conf.PublicKey())
+}
+
+func (req *IntentOrderCallbackRequest) IsSuccess() bool {
+	return req.data.TradeStatus == TradeStatusSuccess
+}
+
+func ParseIntentOrderCallbackRequest(ree *http.Request) (*IntentOrderCallbackRequest, error) {
+	payload := &rawIntentOrderCallbackPayload{}
+	if err := json.NewDecoder(ree.Body).Decode(payload); err != nil {
+		return nil, fmt.Errorf("failed to decode request body: %w", err)
+	}
+
+	total, err := decimal.NewFromString(payload.Total)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse total amount: %w", err)
+	}
+
+	return &IntentOrderCallbackRequest{
+		data:  payload,
+		total: total,
+	}, nil
+}
+
+type rawIntentOrderCallbackResponseData struct {
+	IntentOrderNo   string `json:"intentOrderNo"`
+	CompanyOrderNum string `json:"companyOrderNum"`
+}
+
+type IntentOrderCallbackReply struct {
+	data *rawCallbackResponse[rawIntentOrderCallbackResponseData]
+}
+
+func (req *IntentOrderCallbackRequest) GenerateReply() *IntentOrderCallbackReply {
+	return &IntentOrderCallbackReply{
+		data: &rawCallbackResponse[rawIntentOrderCallbackResponseData]{
+			Code:    StatusCodeSuccess,
+			Msg:     "success",
+			Success: true,
+			Data: &rawIntentOrderCallbackResponseData{
+				IntentOrderNo:   req.data.IntentOrderNo,
+				CompanyOrderNum: req.data.CompanyOrderNum,
+			},
+		},
+	}
+}
+
+func (IntentOrderCallbackRequest) GenerateErrorReply(code StatusCode, msg string) *IntentOrderCallbackReply {
+	return &IntentOrderCallbackReply{
+		data: &rawCallbackResponse[rawIntentOrderCallbackResponseData]{
+			Code:    code,
+			Msg:     msg,
+			Success: false,
+			Data:    nil,
+		},
+	}
+}
+
+func (reply *IntentOrderCallbackReply) WriteTo(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	return json.NewEncoder(w).Encode(reply.data)

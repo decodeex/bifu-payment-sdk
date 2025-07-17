@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	paymentsdk "github.com/decode-ex/payment-sdk"
 	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
 	"github.com/shopspring/decimal"
 )
@@ -226,6 +227,8 @@ func (BuyCoinReply) fromRaw(raw *rawBuyResponse) (*BuyCoinReply, error) {
 	}, nil
 }
 
+// BuyCoin 快捷订单
+// https://open-v2.chippay.com/api/cnAPI.html
 func (c *Client) BuyCoin(ctx context.Context, req *BuyCoinRequest) (*BuyCoinReply, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid request: %w", err)
@@ -252,4 +255,90 @@ func (c *Client) BuyCoin(ctx context.Context, req *BuyCoinRequest) (*BuyCoinRepl
 	}
 
 	return BuyCoinReply{}.fromRaw(&rawReply)
+}
+
+type IntentOrderRequest struct {
+	MerchantOrderID string
+
+	PayAmount decimal.Decimal
+	// PayCurrency string
+}
+
+func (raw *IntentOrderRequest) Validate() error {
+	if raw.MerchantOrderID == "" {
+		return ErrInvalidMerchantOrderID
+	}
+
+	if raw.PayAmount.LessThanOrEqual(decimal.Zero) {
+		return errors.New("amount must be greater than zero")
+	}
+
+	amount := raw.PayAmount.Truncate(0)
+	if !amount.Equal(raw.PayAmount) {
+		return ErrInvalidAmount
+	}
+
+	return nil
+
+}
+
+func (req *IntentOrderRequest) toRaw(ctx context.Context, conf *Config) *rawAddIntentOrderPayload {
+	callbackURL := paymentsdk.GetCallbackURL(ctx, conf.CallbackURL)
+
+	return &rawAddIntentOrderPayload{
+		CompanyOrderNum: req.MerchantOrderID,
+		TotalAmount:     int32(req.PayAmount.IntPart()),
+
+		CompanyID: conf.MerchantID,
+		SyncURL:   conf.RedirectURL,
+		AsyncUrl:  callbackURL,
+	}
+}
+
+type IntentOrderReply struct {
+	SupplyOrderNum string
+	RedirectURL    string
+}
+
+func (IntentOrderReply) fromRaw(raw *rawAddIntentOrderResponse) (*IntentOrderReply, error) {
+	if raw == nil {
+		return nil, errors.New("raw response is nil")
+	}
+	if raw.Code != StatusCodeSuccess {
+		return nil, fmt.Errorf("failed to add intent order: %s", raw.Message)
+	}
+	return &IntentOrderReply{
+		SupplyOrderNum: raw.Data.OrderNo,
+		RedirectURL:    raw.Data.Link,
+	}, nil
+}
+
+// AddIntentOrder 创建自选订单
+// https://open-v2.chippay.com/api/addIntentOrder.html
+func (cli *Client) AddIntentOrder(ctx context.Context, req *IntentOrderRequest) (*IntentOrderReply, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	raw := req.toRaw(ctx, cli.config)
+	intentReq, err := raw.GenerateSignedRequest(ctx, cli.config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signed request: %w", err)
+	}
+	resp, err := cli.http.Do(intentReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	rawReply := raw.Reply()
+	if err := json.NewDecoder(resp.Body).Decode(&rawReply); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return IntentOrderReply{}.fromRaw(&rawReply)
 }

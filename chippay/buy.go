@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/shopspring/decimal"
 )
 
 type signer struct{}
@@ -219,11 +220,155 @@ type rawBuyResponseData struct {
 	OrderNo string `json:"orderNo"`
 }
 
-type rawBuyResponse struct {
-	Code    int                 `json:"code"`
-	Message string              `json:"msg"`
-	Data    *rawBuyResponseData `json:"data"`
-	Success bool                `json:"success"`
+type rawResponse[T any] struct {
+	Code    StatusCode `json:"code"`
+	Message string     `json:"msg"`
+	Data    T          `json:"data"`
+	Success bool       `json:"success"`
+}
+
+type rawBuyResponse = rawResponse[rawBuyResponseData]
+
+type PaymentMethod = int
+
+const (
+	PaymentMethodBankCard PaymentMethod = 1 // 银行卡
+	PaymentMethodAlipay   PaymentMethod = 2 // 支付宝
+	PaymentMethodWeChat   PaymentMethod = 3 // 微信支付
+)
+
+type rawAddIntentOrderPayload struct {
+	// 商户id
+	CompanyID string `json:"companyId"`
+	// 商户订单号
+	CompanyOrderNum string `json:"companyOrderNum"`
+	// 国际区号
+	AreaCode string `json:"areaCode,omitempty" default:"86"`
+	// 手机号
+	Phone string `json:"phone,omitempty"`
+	// 同步返回地址 (用户完成或取消交易后返回至商户平台的地址)
+	SyncURL string `json:"syncUrl"`
+	// 异步通知地址 (商户接收回调通知的地址)
+	AsyncUrl string `json:"asyncUrl"`
+	// 用户付款的法币总金额(只能传整数)
+	// 币种cny
+	TotalAmount int32 `json:"totalAmount,omitempty"`
+	// USDT下单数字货币数量，精度最多至小数点后4位( TotalAmount 和 CoinQuantity 两个字段二选一，当两个字段都填写的时候，优先处理TotalAmount )
+	// CoinQuantity参数换算后法币金额若不为整数将无条件进位为整数显示于收银台
+	CoinQuantity decimal.Decimal `json:"coinQuantity,omitempty"`
+	// 真实姓名(接受简体中文和繁体中文与英文，中国客户一般为姓在前名在后，中间不留空格，建议传输中文字。
+	// 请使用以下pattern: ([\s·\u4e00-\u9fa5]{2,15})|([\s·A-Za-z]{2,35})
+	Name string `json:"name,omitempty"`
+	// 证件类型(1.身份证 2.护照 3.其他)
+	IDCardType IDCardType `json:"idCardType,omitempty"`
+	// 地区国家
+	Area string `json:"area,omitempty"`
+	// 证件号码
+	Number string `json:"number,omitempty"`
+	// 证件人像面URL
+	IdentityPictureFront string `json:"identityPictureFront,omitempty"`
+	// 证件无人像面URL
+	IdentityPictureBack string `json:"identityPictureBack,omitempty"`
+	// 附加证件 URL
+	AdditionalPicture string `json:"additionalPicture,omitempty"`
+	// 支付方式(用户指定只能使用的支付方式，若不指定则用户可自行选择支付方式。
+	// 1.银行卡 2.支付宝支付 3.微信支付)
+	PaymentMethod PaymentMethod `json:"paymentMethod,omitempty"`
+	// 签名
+	Sign string `json:"sign"`
+}
+
+func (raw *rawAddIntentOrderPayload) serializeToMap() map[string]string {
+	params := map[string]string{
+		"companyId":       raw.CompanyID,
+		"companyOrderNum": raw.CompanyOrderNum,
+		"syncUrl":         raw.SyncURL,
+		"asyncUrl":        raw.AsyncUrl,
+	}
+
+	if raw.AreaCode != "" {
+		params["areaCode"] = raw.AreaCode
+	}
+
+	if raw.Phone != "" {
+		params["phone"] = raw.Phone
+	}
+	if raw.TotalAmount > 0 {
+		params["totalAmount"] = strconv.Itoa(int(raw.TotalAmount))
+	}
+	if raw.CoinQuantity.GreaterThan(decimal.Zero) {
+		params["coinQuantity"] = raw.CoinQuantity.StringFixed(4)
+	}
+	if raw.Name != "" {
+		params["name"] = raw.Name
+	}
+	if raw.IDCardType > 0 {
+		params["idCardType"] = strconv.Itoa(raw.IDCardType)
+	}
+	if raw.Area != "" {
+		params["area"] = raw.Area
+	}
+	if raw.Number != "" {
+		params["number"] = raw.Number
+	}
+	if raw.IdentityPictureFront != "" {
+		params["identityPictureFront"] = raw.IdentityPictureFront
+	}
+	if raw.IdentityPictureBack != "" {
+		params["identityPictureBack"] = raw.IdentityPictureBack
+	}
+	if raw.AdditionalPicture != "" {
+		params["additionalPicture"] = raw.AdditionalPicture
+	}
+	if raw.PaymentMethod > 0 {
+		params["paymentMethod"] = strconv.Itoa(raw.PaymentMethod)
+	}
+	return params
+}
+
+func (raw *rawAddIntentOrderPayload) generateSign(priavateKey *rsa.PrivateKey) (map[string]string, string, error) {
+	params := raw.serializeToMap()
+	sign, err := signer{}.Sign(priavateKey, params)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to generate sign: %w", err)
+	}
+	params["sign"] = sign
+	return params, sign, nil
+}
+
+func (raw *rawAddIntentOrderPayload) GenerateSignedRequest(ctx context.Context, config *Config) (*http.Request, error) {
+	const (
+		Path        = "/cola/apiOpen/addIntentOrder"
+		Method      = http.MethodPost
+		ContentType = "application/json"
+	)
+	payload, _, err := raw.generateSign(config.privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, Method, Path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", ContentType)
+
+	return req, nil
+}
+
+func (raw *rawAddIntentOrderPayload) Reply() rawAddIntentOrderResponse {
+	return rawAddIntentOrderResponse{}
+}
+
+type rawAddIntentOrderResponse = rawResponse[rawAddIntentOrderResponseData]
+
+type rawAddIntentOrderResponseData struct {
+	Link    string `json:"link"`
+	OrderNo string `json:"orderNo"`
 }
 
 // https://open-v2.chippay.com/api/cnAPI.html#10106
