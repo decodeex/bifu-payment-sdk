@@ -261,7 +261,7 @@ func (req *IntentOrderCallbackRequest) GenerateReply() *IntentOrderCallbackReply
 	}
 }
 
-func (IntentOrderCallbackRequest) GenerateErrorReply(code StatusCode, msg string) *IntentOrderCallbackReply {
+func GenerateIntentOrderErrorReply(code StatusCode, msg string) *IntentOrderCallbackReply {
 	return &IntentOrderCallbackReply{
 		data: &rawCallbackResponse[rawIntentOrderCallbackResponseData]{
 			Code:    code,
