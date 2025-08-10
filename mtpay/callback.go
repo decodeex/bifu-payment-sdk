@@ -50,3 +50,11 @@ func (req *CallbackRequest) IsFailed() bool {
 func (req *CallbackRequest) GetPaidAmount() decimal.Decimal {
 	return req.raw.Data.TransactionAmount
 }
+
+func (req *CallbackRequest) GetPayCurrency() string {
+	return req.raw.Data.FiatCurrency
+}
+
+func (req *CallbackRequest) GetStatus() string {
+	return req.raw.Data.RequestStatus
+}
