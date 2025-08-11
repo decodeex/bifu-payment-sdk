@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,6 +39,10 @@ const (
 	CurrencyHKD = "HKD" // Hong Kong Dollar
 )
 
+func IsDepositCurrencyValid(currency Currency) bool {
+	return currency == CurrencyMTC || currency == CurrencyCNY || currency == CurrencyHKD
+}
+
 type CurrencyCode = string
 
 type APIMerchantDepositRequest struct {
@@ -48,6 +54,40 @@ type APIMerchantDepositRequest struct {
 	WebhookURL      string                          `json:"webhookUrl"`              // Webhook URL for notifications
 	Language        *Language                       `json:"language,omitempty"`      // Preferred language (default: en)
 	PaymentMethod   *PaymentMethod                  `json:"paymentMethod,omitempty"` // Payment method (optional)
+}
+
+func (req *APIMerchantDepositRequest) Validate() error {
+	if req.Client.RealName == "" {
+		return errors.New("client.realName cannot be empty")
+	}
+	if req.DepositCurrency == "" {
+		return errors.New("depositCurrency cannot be empty")
+	}
+	if !IsDepositCurrencyValid(req.DepositCurrency) {
+		return fmt.Errorf("unsupported depositCurrency: %s", req.DepositCurrency)
+	}
+	if req.FiatCurrency == "" {
+		return errors.New("fiatCurrency cannot be empty")
+	}
+	if req.DepositAmount.LessThanOrEqual(decimal.Zero) {
+		return errors.New("depositAmount must be greater than zero")
+	}
+	if req.MerchantOrderNo == "" {
+		return errors.New("merchantOrderNo cannot be empty")
+	}
+	if req.WebhookURL == "" {
+		return errors.New("webhookUrl cannot be empty")
+	}
+
+	if req.Language != nil {
+		switch lang := *req.Language; lang {
+		case LanguageEn, LanguageZhCN, LanguageZhTW:
+		default:
+			return fmt.Errorf("unsupported language: %s", lang)
+		}
+	}
+
+	return nil
 }
 
 func (req *APIMerchantDepositRequest) GenerateSignedRquest(ctx context.Context, accessKey, secretKey string) (*http.Request, error) {

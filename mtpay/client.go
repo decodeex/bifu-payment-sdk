@@ -51,22 +51,30 @@ type DepositRequest struct {
 	raw *internal.APIMerchantDepositRequest
 }
 
+// NewDepositRequest creates a new DepositRequest with the required fields.
+// Optional fields can be set using the provided setter methods.
+//
+// If payCurrency and getCurrency are the same, it means the user pays payOrGetAmount with fiat currency to get the same amount of fiat currency in the account.
+// If they are different, it means the user need to pay fiat currency to get payOrGetAmount of getCurrency in the account.
 func NewDepositRequest(
 	merchantOrderNo string,
 	userRealName string,
 
 	payCurrency string,
-	toAmount decimal.Decimal,
+	getCurrency string,
+
+	payOrGetAmount decimal.Decimal,
 ) *DepositRequest {
+
 	raw := &internal.APIMerchantDepositRequest{
 		Client: internal.APIMerchantDepositRequestClient{
 			RealName: userRealName,
 		},
-		DepositCurrency: internal.CurrencyMTC,
+		DepositCurrency: getCurrency,
 		FiatCurrency:    payCurrency,
-		DepositAmount:   toAmount,
+		DepositAmount:   payOrGetAmount,
 		MerchantOrderNo: merchantOrderNo,
-		WebhookURL:      "", // set when sending the request
+		WebhookURL:      "http://example.com/callback", // set when sending the request
 	}
 	return &DepositRequest{
 		raw: raw,
@@ -95,7 +103,7 @@ func (req *DepositRequest) SetLanguage(lang language.Tag) {
 // }
 
 func (req *DepositRequest) Validate() error {
-	return nil // Add validation logic if needed
+	return req.raw.Validate()
 }
 
 func (req *DepositRequest) GenerateSignedRquest(ctx context.Context, cfg *Config) (*http.Request, error) {
