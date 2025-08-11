@@ -27,25 +27,26 @@ const (
 )
 
 type SourceFrom = string
+type PaymentMethodOption = string
 
 type WebHookRequestData struct {
-	TradeType         TradeType       `json:"tradeType"`         // Transaction type: Deposit or Withdraw
-	RequestCode       string          `json:"requestCode"`       // Unique system-generated request code
-	MerchantOrderNo   string          `json:"merchantOrderNo"`   // Merchant's unique order number
-	InternalOrderNo   string          `json:"internalOrderNo"`   // Internal system order number
-	Source            SourceFrom      `json:"source"`            // Request source: MerchantBackend, API_V1, API_V2
-	ClientName        string          `json:"clientName"`        // Client's name
-	RequestAmount     decimal.Decimal `json:"requestAmount"`     // Requested transaction amount
-	RequestCurrency   string          `json:"requestCurrency"`   // Currency of the transaction (e.g., MTC/CNY/HKD)
-	Message           string          `json:"message"`           // Status message or additional information
-	PaymentMethod     PaymentMethod   `json:"paymentMethod"`     // Payment method used, if applicable
-	RequestStatus     TradeStatus     `json:"requestStatus"`     // Current status of the transaction
-	UnitPrice         decimal.Decimal `json:"unitPrice"`         // Exchange rate used (fiat / MTC)
-	TransactionAmount decimal.Decimal `json:"transactionAmount"` // Transaction Amount (MTC)
-	ReceivedAmount    decimal.Decimal `json:"receivedAmount"`    // Merchant received/deducted by the client
-	TransactionFee    decimal.Decimal `json:"transactionFee"`    // Transaction fee charged
-	PaymentAmount     decimal.Decimal `json:"paymentAmount"`     // Final payment amount in fiat
-	FiatCurrency      CurrencyCode    `json:"fiatCurrency"`      // Fiat currency code: CNY, HKD
+	TradeType         TradeType           `json:"tradeType"`         // Transaction type: Deposit or Withdraw
+	RequestCode       string              `json:"requestCode"`       // Unique system-generated request code
+	MerchantOrderNo   string              `json:"merchantOrderNo"`   // Merchant's unique order number
+	InternalOrderNo   string              `json:"internalOrderNo"`   // Internal system order number
+	Source            SourceFrom          `json:"source"`            // Request source: MerchantBackend, API_V1, API_V2
+	ClientName        string              `json:"clientName"`        // Client's name
+	RequestAmount     decimal.Decimal     `json:"requestAmount"`     // Requested transaction amount
+	RequestCurrency   string              `json:"requestCurrency"`   // Currency of the transaction (e.g., MTC/CNY/HKD)
+	Message           string              `json:"message"`           // Status message or additional information
+	PaymentMethod     PaymentMethodOption `json:"paymentMethod"`     // Payment method used, if applicable
+	RequestStatus     TradeStatus         `json:"requestStatus"`     // Current status of the transaction
+	UnitPrice         decimal.Decimal     `json:"unitPrice"`         // Exchange rate used (fiat / MTC)
+	TransactionAmount decimal.Decimal     `json:"transactionAmount"` // Transaction Amount (MTC)
+	ReceivedAmount    decimal.Decimal     `json:"receivedAmount"`    // Merchant received/deducted by the client
+	TransactionFee    decimal.Decimal     `json:"transactionFee"`    // Transaction fee charged
+	PaymentAmount     decimal.Decimal     `json:"paymentAmount"`     // Final payment amount in fiat
+	FiatCurrency      CurrencyCode        `json:"fiatCurrency"`      // Fiat currency code: CNY, HKD
 }
 
 type WebHookRequest struct {
