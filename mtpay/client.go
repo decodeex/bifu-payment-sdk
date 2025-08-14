@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/shopspring/decimal"
-	"golang.org/x/text/language"
 
 	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
 	"github.com/decode-ex/payment-sdk/mtpay/internal"
@@ -85,12 +84,17 @@ func (req *DepositRequest) SetWebhookURL(webhookURL string) {
 	req.raw.WebhookURL = webhookURL
 }
 
-func (req *DepositRequest) SetLanguage(lang language.Tag) {
-	langStr := lang.String()
+const (
+	LanguageEn   = internal.LanguageEn
+	LanguageZhCN = internal.LanguageZhCN
+	LanguageZhTW = internal.LanguageZhTW
+)
+
+func (req *DepositRequest) SetLanguage(lang string) {
 	if req.raw.Language == nil {
-		req.raw.Language = &langStr
+		req.raw.Language = &lang
 	} else {
-		*req.raw.Language = langStr
+		*req.raw.Language = lang
 	}
 }
 
