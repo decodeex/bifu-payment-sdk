@@ -6,31 +6,14 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/decode-ex/payment-sdk/bft/internal"
 	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
+	"github.com/shopspring/decimal"
 )
 
 const (
-	_DEV_BASE_URL  = "https://api.maxpay666.com"
-	_PROD_BASE_URL = "https://api.exlinked.com"
+	BASE_URL = "https://api.exlinked.com"
 )
-
-type Env int
-
-const (
-	EnvDev Env = iota
-	EnvProd
-)
-
-func (e Env) baseURL() string {
-	switch e {
-	case EnvDev:
-		return _DEV_BASE_URL
-	case EnvProd:
-		return _PROD_BASE_URL
-	default:
-		return _DEV_BASE_URL
-	}
-}
 
 type Config struct {
 	MerchantID     string
@@ -44,8 +27,8 @@ type Client struct {
 	config *Config
 }
 
-func NewClient(env Env, conf Config) (*Client, error) {
-	transport, err := httptransport.NewTransport(env.baseURL())
+func NewClient(conf Config) (*Client, error) {
+	transport, err := httptransport.NewTransport(BASE_URL)
 	if err != nil {
 		return nil, err
 	}
@@ -58,37 +41,105 @@ func NewClient(env Env, conf Config) (*Client, error) {
 	}, nil
 }
 
-func NewDevClient(conf Config) (*Client, error) {
-	return NewClient(EnvDev, conf)
+type CheckoutRequest struct {
+	inner *internal.CheckoutPayload
 }
 
-func NewProdClient(conf Config) (*Client, error) {
-	return NewClient(EnvProd, conf)
+func NewCheckoutRequest(
+	uniqueCode string,
+	money decimal.Decimal,
+	orderID string,
+	payerName string,
+) *CheckoutRequest {
+	return &CheckoutRequest{
+		inner: &internal.CheckoutPayload{
+			UniqueCode: uniqueCode,
+			Money:      money,
+			OrderID:    orderID,
+			PayerName:  payerName,
+			PayType:    internal.PayTypeUnknown,
+		},
+	}
+}
+
+func (req *CheckoutRequest) SetMerchantID(merchantID string) *CheckoutRequest {
+	req.inner.Uid = merchantID
+	return req
+}
+
+type PayType = internal.PayType
+
+const (
+	PayTypeUnionPay PayType = internal.PayTypeUnionPay
+	PayTypeAlipay   PayType = internal.PayTypeAlipay
+	PayTypeWeChat   PayType = internal.PayTypeWeChat
+)
+
+func (req *CheckoutRequest) SetPayType(payType PayType) *CheckoutRequest {
+	req.inner.PayType = payType
+	return req
+}
+
+func (req *CheckoutRequest) SetJumpURL(jumpURL string) *CheckoutRequest {
+	if jumpURL != "" {
+		req.inner.JumpUrl = jumpURL
+	}
+	return req
+}
+
+func (req *CheckoutRequest) generateSignedRquest(ctx context.Context, conf *Config) (*http.Request, error) {
+	if conf == nil {
+		panic("Config cannot be nil")
+	}
+	if req.inner.PayType == internal.PayTypeUnknown {
+		req.inner.PayType = conf.DefaultPayType
+	}
+	if req.inner.Uid == "" {
+		req.inner.Uid = conf.MerchantID
+	}
+	if err := req.inner.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid checkout payload: %w", err)
+	}
+
+	httpReq, err := req.inner.GenerateSignedRequest(ctx, conf.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("generate signed request error: %w", err)
+	}
+	return httpReq, nil
+}
+
+type CheckoutReply struct {
+	inner *internal.CheckoutResponse
+}
+
+func (reply *CheckoutReply) GetCheckoutURL() string {
+	return reply.inner.Data
 }
 
 func (cli *Client) Checkout(ctx context.Context, req *CheckoutRequest) (*CheckoutReply, error) {
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-	raw := req.toRaw(cli.config)
-	reqBody, err := raw.GenerateSignedRequest(ctx, cli.config)
+
+	httpReq, err := req.generateSignedRquest(ctx, cli.config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate signed request error: %w", err)
 	}
-	resp, err := cli.http.Do(reqBody)
+	resp, err := cli.http.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("http request error: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
-	reply := raw.Reply()
-	if err := json.NewDecoder(resp.Body).Decode(reply); err != nil {
-		return nil, err
+	var reply internal.CheckoutResponse
+	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
+		return nil, fmt.Errorf("decode response error: %w", err)
 	}
 
-	return CheckoutReply{}.fromRaw(reply)
+	if !reply.IsSuccess() {
+		return nil, fmt.Errorf("API error status: %d, message: %s", reply.Code, reply.Message)
+	}
+
+	return &CheckoutReply{
+		inner: &reply,
+	}, nil
 }

@@ -106,16 +106,17 @@ func (req *DepositRequest) SetLanguage(lang string) {
 // 	}
 // }
 
-func (req *DepositRequest) Validate() error {
+func (req *DepositRequest) validate() error {
 	return req.raw.Validate()
 }
 
-func (req *DepositRequest) GenerateSignedRquest(ctx context.Context, cfg *Config) (*http.Request, error) {
+func (req *DepositRequest) generateSignedRquest(ctx context.Context, cfg *Config) (*http.Request, error) {
 	if cfg == nil {
 		panic("Config cannot be nil")
 	}
-
-	req.SetWebhookURL(cfg.CallbackURL)
+	if req.raw.WebhookURL == "" || req.raw.WebhookURL == "http://example.com/callback" {
+		req.SetWebhookURL(cfg.CallbackURL)
+	}
 	return req.raw.GenerateSignedRquest(ctx, cfg.AccessKey, cfg.SecretKey)
 }
 
@@ -132,11 +133,11 @@ func (resp *DepositResponse) GetGatewayRequestCode() string {
 }
 
 func (cli *Client) Deposit(ctx context.Context, req *DepositRequest) (*DepositResponse, error) {
-	if err := req.Validate(); err != nil {
+	if err := req.validate(); err != nil {
 		return nil, err
 	}
 
-	httpReq, err := req.GenerateSignedRquest(ctx, cli.config)
+	httpReq, err := req.generateSignedRquest(ctx, cli.config)
 	if err != nil {
 		return nil, err
 	}
