@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/decodeex/bifu-payment-sdk/internal/strings2"
 )
 
 type signEntry struct {

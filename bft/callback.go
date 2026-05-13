@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/decode-ex/payment-sdk/bft/internal"
+	"github.com/decodeex/bifu-payment-sdk/bft/internal"
 	"github.com/shopspring/decimal"
 )
 

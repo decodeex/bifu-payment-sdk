@@ -1,4 +1,4 @@
-module github.com/decode-ex/payment-sdk
+module github.com/decodeex/bifu-payment-sdk
 
 go 1.23.2
 

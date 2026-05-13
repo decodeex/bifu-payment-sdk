@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/decodeex/bifu-payment-sdk/internal/strings2"
 )
 
 func GenerateSignature(accessKey, secretKey string, timestampMs int64) string {

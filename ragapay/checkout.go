@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/decodeex/bifu-payment-sdk/internal/strings2"
 )
 
 type Operation = string

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
+	httptransport "github.com/decodeex/bifu-payment-sdk/internal/http_transport"
 )
 
 const (

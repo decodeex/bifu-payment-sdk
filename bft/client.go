@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/decode-ex/payment-sdk/bft/internal"
-	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
+	"github.com/decodeex/bifu-payment-sdk/bft/internal"
+	httptransport "github.com/decodeex/bifu-payment-sdk/internal/http_transport"
 	"github.com/shopspring/decimal"
 )
 

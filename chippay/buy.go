@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/decodeex/bifu-payment-sdk/internal/strings2"
 	"github.com/shopspring/decimal"
 )
 

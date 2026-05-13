@@ -8,8 +8,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
-	"github.com/decode-ex/payment-sdk/mtpay/internal"
+	httptransport "github.com/decodeex/bifu-payment-sdk/internal/http_transport"
+	"github.com/decodeex/bifu-payment-sdk/mtpay/internal"
 )
 
 type Config struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decode-ex/payment-sdk/internal/strings2"
+	"github.com/decodeex/bifu-payment-sdk/internal/strings2"
 	"golang.org/x/text/language"
 )
 

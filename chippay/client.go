@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	paymentsdk "github.com/decode-ex/payment-sdk"
-	httptransport "github.com/decode-ex/payment-sdk/internal/http_transport"
+	"github.com/decodeex/bifu-payment-sdk/internal/ctxutil"
+	httptransport "github.com/decodeex/bifu-payment-sdk/internal/http_transport"
 	"github.com/shopspring/decimal"
 )
 
@@ -288,7 +288,7 @@ func (raw *IntentOrderRequest) Validate() error {
 }
 
 func (req *IntentOrderRequest) toRaw(ctx context.Context, conf *Config) *rawAddIntentOrderPayload {
-	callbackURL := paymentsdk.GetCallbackURL(ctx, conf.CallbackURL)
+	callbackURL := ctxutil.GetCallbackURL(ctx, conf.CallbackURL)
 
 	return &rawAddIntentOrderPayload{
 		CompanyOrderNum: req.MerchantOrderID,

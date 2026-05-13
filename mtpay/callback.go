@@ -3,7 +3,7 @@ package mtpay
 import (
 	"encoding/json"
 
-	"github.com/decode-ex/payment-sdk/mtpay/internal"
+	"github.com/decodeex/bifu-payment-sdk/mtpay/internal"
 	"github.com/shopspring/decimal"
 )
 
