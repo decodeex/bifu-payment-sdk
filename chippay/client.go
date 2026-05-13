@@ -262,6 +262,8 @@ type IntentOrderRequest struct {
 
 	PayAmount decimal.Decimal
 	// PayCurrency string
+	// 根据chipPay官方通知：5/18/2026會針對此自選買單通道進行調整，主要是將“name"改為必傳且傳輸中文，其餘規則沒有變動
+	Name string
 }
 
 func (raw *IntentOrderRequest) Validate() error {
@@ -278,6 +280,9 @@ func (raw *IntentOrderRequest) Validate() error {
 		return ErrInvalidAmount
 	}
 
+	if raw.Name == "" {
+		return ErrInvalidName
+	}
 	return nil
 
 }
@@ -288,6 +293,7 @@ func (req *IntentOrderRequest) toRaw(ctx context.Context, conf *Config) *rawAddI
 	return &rawAddIntentOrderPayload{
 		CompanyOrderNum: req.MerchantOrderID,
 		TotalAmount:     int32(req.PayAmount.IntPart()),
+		Name:            req.Name,
 
 		CompanyID: conf.MerchantID,
 		SyncURL:   conf.RedirectURL,
