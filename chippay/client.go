@@ -348,3 +348,7 @@ func (cli *Client) AddIntentOrder(ctx context.Context, req *IntentOrderRequest) 
 
 	return IntentOrderReply{}.fromRaw(&rawReply)
 }
+
+func (cli *Client) GetBaseURL() string {
+	return cli.config.env.baseURL()
+}
