@@ -163,6 +163,7 @@ type rawIntentOrderCallbackPayload struct {
 	TradeOrderTime  string      `json:"tradeOrderTime"`  // 自选订单创建时间 (北京时间)
 	TradeStatus     TradeStatus `json:"tradeStatus"`     // 交易状态(0:交易失败1:交易成功)
 	UnitPrice       string      `json:"unitPrice"`       // 数字货币单价, bigDecimal to string type
+	CancelReason    string      `json:"cancelReason"`    // 取消理由
 }
 
 func (payload *rawIntentOrderCallbackPayload) VerifySignature(publicKey *rsa.PublicKey) error {
@@ -180,6 +181,9 @@ func (payload *rawIntentOrderCallbackPayload) serializeToMap() map[string]string
 	params["unitPrice"] = payload.UnitPrice
 	params["total"] = payload.Total
 	params["successAmount"] = payload.SuccessAmount
+	if payload.TradeStatus == TradeStatusFailed {
+		params["cancelReason"] = payload.CancelReason
+	}
 	return params
 }
 
