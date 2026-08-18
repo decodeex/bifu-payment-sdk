@@ -389,11 +389,14 @@ func TestReportCarriesAllIdentifiers(t *testing.T) {
 	paidAt := time.Date(2026, 8, 18, 10, 20, 0, 0, time.FixedZone("CST", 8*3600))
 	_, err := hub.Deposit(context.Background(), intent(), func(_ context.Context, _ Decision) (ExecResult, error) {
 		return ExecResult{
-			ChannelOrderNo:   "CH-778899",
-			RawChannelStatus: "FINISHED",
-			PaidAmount:       "7200.00",
-			ChannelPaidAt:    &paidAt,
-			WillRetry:        false,
+			ChannelOrderNo:       "CH-778899",
+			RawChannelStatus:     "FINISHED",
+			PaidFiatAmount:       "7200.00",
+			PaidSettlementAmount: "1059.83",
+			ChannelDealPrice:     "0.147485",
+			ChannelReceipt:       map[string]any{"tradeStatus": "SUCCESS", "tradeId": "BFT-9911"},
+			ChannelPaidAt:        &paidAt,
+			WillRetry:            false,
 		}, nil
 	})
 	if err != nil {
@@ -813,5 +816,81 @@ func TestShadowContinuesWhenNoChannelAvailable(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("排除原因没有带回给调用方: %v", out.SuppressedErrors)
+	}
+}
+
+// 渠道回执与双边实付要原样送到中台（C8）。
+//
+// 这几项是「出了问题能不能还原现场」的全部依据：回执报文丢了，
+// 事后就只能问渠道客服；两侧实付合成一个数，就分不清那是 CNY 还是 USDT。
+func TestReportCarriesReceiptAndBothSideAmounts(t *testing.T) {
+	f := newFakeHub(t, "sk_test")
+	hub, srv, _ := newTestHub(t, ModeShadow, f)
+	defer srv.Close()
+
+	paidAt := time.Now()
+	exec := func(_ context.Context, _ Decision) (ExecResult, error) {
+		return ExecResult{
+			ChannelOrderNo:       "CH-778899",
+			RawChannelStatus:     "FINISHED",
+			PaidFiatAmount:       "7200.00",
+			PaidSettlementAmount: "1059.83",
+			ChannelDealPrice:     "0.147485",
+			ChannelReceipt: map[string]any{
+				"tradeStatus": "SUCCESS",
+				"tradeId":     "BFT-9911",
+				"money":       "7200.00",
+				"nested":      map[string]any{"unitPrice": "0.147485"},
+			},
+			ChannelPaidAt: &paidAt,
+		}, nil
+	}
+	if _, err := hub.Deposit(context.Background(), intent(), exec); err != nil {
+		t.Fatalf("Deposit: %v", err)
+	}
+
+	got := f.report()
+	if got.PaidFiatAmount == nil || *got.PaidFiatAmount != "7200.00" {
+		t.Errorf("法币侧实付 = %v", got.PaidFiatAmount)
+	}
+	if got.PaidSettlementAmount == nil || *got.PaidSettlementAmount != "1059.83" {
+		t.Errorf("结算币侧实付 = %v", got.PaidSettlementAmount)
+	}
+	if got.ChannelDealPrice == nil || *got.ChannelDealPrice != "0.147485" {
+		t.Errorf("渠道成交价 = %v", got.ChannelDealPrice)
+	}
+	if got.ChannelReceipt == nil {
+		t.Fatal("回执报文没有送上去")
+	}
+	if got.ChannelReceipt["tradeId"] != "BFT-9911" {
+		t.Errorf("回执报文内容不对: %v", got.ChannelReceipt)
+	}
+	// 嵌套结构不能被压平或丢掉 —— 渠道的报文经常是嵌套的
+	nested, ok := got.ChannelReceipt["nested"].(map[string]any)
+	if !ok || nested["unitPrice"] != "0.147485" {
+		t.Errorf("嵌套字段丢了: %v", got.ChannelReceipt["nested"])
+	}
+}
+
+// 没拿到这些东西时不要送空值上去：中台区分「渠道没给」与「给了空」
+func TestReportOmitsReceiptWhenAbsent(t *testing.T) {
+	f := newFakeHub(t, "sk_test")
+	hub, srv, _ := newTestHub(t, ModeShadow, f)
+	defer srv.Close()
+
+	called := false
+	var seen Decision
+	if _, err := hub.Deposit(context.Background(), intent(), okExec(&called, &seen)); err != nil {
+		t.Fatalf("Deposit: %v", err)
+	}
+	got := f.report()
+	if got.ChannelReceipt != nil {
+		t.Errorf("没有回执时不该送出 channelReceipt: %v", got.ChannelReceipt)
+	}
+	if got.PaidFiatAmount != nil || got.PaidSettlementAmount != nil {
+		t.Errorf("没有实付时两侧都该是 nil: %v %v", got.PaidFiatAmount, got.PaidSettlementAmount)
+	}
+	if got.ChannelDealPrice != nil {
+		t.Errorf("渠道没报价时不该送出 channelDealPrice: %v", got.ChannelDealPrice)
 	}
 }

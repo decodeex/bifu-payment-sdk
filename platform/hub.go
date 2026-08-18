@@ -89,8 +89,15 @@ type ExecResult struct {
 	// 否则中台会把订单落成终态，而终态不可逆 —— 这笔订单就永久死了
 	WillRetry bool
 
-	PaidAmount    string
-	ChannelPaidAt *time.Time
+	// 渠道实际收付的两侧金额。只拿到一侧就只填一侧，别自己折算
+	PaidFiatAmount       string
+	PaidSettlementAmount string
+	// 渠道自己报的成交价（有的话）。中台会拿它和快照里的价对账
+	ChannelDealPrice string
+	// 渠道回执原始报文。**建议一定填**：出问题时这是唯一能还原渠道说了什么的东西。
+	// 直接把解析回调用的那个 map / 结构体转成 map 塞进来即可，不用挑字段
+	ChannelReceipt map[string]any
+	ChannelPaidAt  *time.Time
 }
 
 // ExecuteFunc 就是调用方原来那一次渠道调用。
@@ -437,8 +444,17 @@ func (h *Hub) reportOnce(ctx context.Context, d Decision, in DepositIntent, res 
 	if res.RawChannelStatus != "" {
 		req.RawChannelStatus = &res.RawChannelStatus
 	}
-	if res.PaidAmount != "" {
-		req.PaidAmount = &res.PaidAmount
+	if res.PaidFiatAmount != "" {
+		req.PaidFiatAmount = &res.PaidFiatAmount
+	}
+	if res.PaidSettlementAmount != "" {
+		req.PaidSettlementAmount = &res.PaidSettlementAmount
+	}
+	if res.ChannelDealPrice != "" {
+		req.ChannelDealPrice = &res.ChannelDealPrice
+	}
+	if len(res.ChannelReceipt) > 0 {
+		req.ChannelReceipt = res.ChannelReceipt
 	}
 	if res.FailureReason != "" {
 		req.FailureReason = &res.FailureReason

@@ -206,7 +206,16 @@ func deposit(ctx context.Context, hub *platform.Hub) (*platform.Outcome, error) 
 			ChannelOrderNo:   "CH-DEMO-0001",
 			RawChannelStatus: "PENDING",
 			RedirectURL:      "https://fake-channel.example.com/pay/abc",
-			ChannelPaidAt:    &paidAt,
+			// 渠道回执原样带上：出问题时这是唯一能还原「渠道到底说了什么」的东西。
+			// 真实接入时把解析回调用的那个结构体转成 map 塞进来即可，不用挑字段
+			PaidFiatAmount:   "7200.00",
+			ChannelDealPrice: "0.147485",
+			ChannelReceipt: map[string]any{
+				"tradeStatus": "PENDING",
+				"tradeId":     "CH-DEMO-0001",
+				"money":       "7200.00",
+			},
+			ChannelPaidAt: &paidAt,
 		}, nil
 		// ↑↑↑ 原来那一行 ↑↑↑
 	})

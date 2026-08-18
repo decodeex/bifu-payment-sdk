@@ -162,7 +162,19 @@ type ReportResultRequest struct {
 	ChannelOrderNo   *string `json:"channelOrderNo"`
 	Status           string  `json:"status"`
 	RawChannelStatus *string `json:"rawChannelStatus"`
-	PaidAmount       *string `json:"paidAmount"`
+	// 渠道实际收付的两侧金额。渠道只给一侧时另一侧留 nil ——
+	// **不要自己折算**，折算出来的不是渠道说的数。
+	// 两者差一个汇率的量级，合成一个字段中台就无从分辨。
+	PaidFiatAmount       *string `json:"paidFiatAmount"`
+	PaidSettlementAmount *string `json:"paidSettlementAmount"`
+	// 渠道**自己报的**成交价（Chippay 回调里的 UnitPrice）。
+	// 与建单快照里的 dealPrice 是两个数：后者是下单时本地算的，这个是渠道事后说的。
+	// 中台会把两者并排显示并标出差异 —— 那是对账的第一个问题
+	ChannelDealPrice *string `json:"channelDealPrice"`
+	// 渠道回执**原始报文**。原样传，不要归一或裁剪：
+	// 每个渠道字段结构都不一样，裁掉的往往正是出问题那次要看的那个。
+	// 中台侧有 64 KB 上限
+	ChannelReceipt map[string]any `json:"channelReceipt"`
 	// 渠道侧的完成时间，RFC3339 **带时区**。不带时区的时间在对账时会差几个小时
 	ChannelPaidAt *string `json:"channelPaidAt"`
 	Degraded      bool    `json:"degraded"`
