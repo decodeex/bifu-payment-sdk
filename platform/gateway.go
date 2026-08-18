@@ -23,6 +23,9 @@ import (
 // 不是安全控制** —— 它刻意不拒单。定价正确性由两侧共用的 pricing-vectors.json 保证。
 
 // RouteRequest 选道。
+//
+// 字段名与建单请求保持一致（requestAmount 而不是 amount）——
+// 早期两边不一致过一次，第一次对着真中台跑就 400 了。
 type RouteRequest struct {
 	FiatCode       string `json:"fiatCode"`
 	SettlementCode string `json:"settlementCode"`
@@ -40,11 +43,26 @@ type RouteCandidate struct {
 	Reason    string  `json:"reason"`
 }
 
+// RouteRejected 是被排除的通道及原因。
+//
+// **中台一定会返回它**，SDK 也一定要暴露出来：运营最常问的问题就是
+// 「为什么这笔没走 A 通道」。不给原因就只能去翻日志，
+// 而日志里未必留了当时的限额与额度快照。
+type RouteRejected struct {
+	ChannelNo string `json:"channelNo"`
+	Rejection string `json:"rejection"`
+	Reason    string `json:"reason"`
+}
+
 type RouteReply struct {
-	ChannelNo    string           `json:"channelNo"`
+	// 首选通道。**空字符串表示没有可用通道**（中台返回 null）——
+	// 这是一个正常的业务结论，不是错误，所以中台回的是 200。
+	// Enforce 模式下拿到空值必须拒单，不能拿一个空通道号往下走
+	ChannelNo string `json:"chosen"`
+	// 渠道 API 基准地址。调用方原本自己就知道它，这里给出来只为便于核对配置是否一致
 	BaseEndpoint string           `json:"baseEndpoint"`
-	CallbackURL  string           `json:"callbackUrl"`
 	Candidates   []RouteCandidate `json:"candidates"`
+	Rejected     []RouteRejected  `json:"rejected"`
 }
 
 func (c *Client) Route(ctx context.Context, req RouteRequest) (*RouteReply, error) {

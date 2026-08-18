@@ -33,6 +33,7 @@ type fakeHub struct {
 	routeChannel string
 	fx           FxConfig
 	priceCheck   *PriceCheck
+	rejected     []RouteRejected
 	lastOrder    CreateOrderRequest
 }
 
@@ -134,8 +135,8 @@ func (f *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(RouteReply{
 			ChannelNo:    f.routeChannel,
 			BaseEndpoint: "https://channel.example.com",
-			CallbackURL:  "https://hub.example.com/callback/000009/M100001",
 			Candidates:   []RouteCandidate{{ChannelNo: f.routeChannel, Score: 0.9, Reason: "成功率最高"}},
+			Rejected:     f.rejected,
 		})
 	case r.URL.Path == "/api/internal/config/fx":
 		// 点差配置。成交价不在这里算了 —— 中台只给点差，价由 SDK 本地算
@@ -754,5 +755,63 @@ func TestNoFxConfigIsRejectedNotDefaulted(t *testing.T) {
 	}
 	if called {
 		t.Error("拒单了就不该调渠道")
+	}
+}
+
+// 中台说「没有可用通道」时，Enforce 必须拒单 —— 那是业务结论，不是中台不可用。
+// 重试也还是这个结果（限额、币种对、凭据不会因为再问一次而改变）
+func TestEnforceRejectsWhenNoChannelAvailable(t *testing.T) {
+	f := newFakeHub(t, "sk_test")
+	f.routeChannel = "" // 中台返回 chosen: null
+	f.rejected = []RouteRejected{
+		{ChannelNo: "000001", Rejection: "AMOUNT_ABOVE_MAX", Reason: "金额高于单笔上限"},
+		{ChannelNo: "000002", Rejection: "NO_CREDENTIAL", Reason: "该商户在此通道没有鉴权凭据"},
+	}
+	hub, srv, _ := newTestHub(t, ModeEnforce, f)
+	defer srv.Close()
+
+	called := false
+	var seen Decision
+	_, err := hub.Deposit(context.Background(), intent(), okExec(&called, &seen))
+	if !errors.Is(err, ErrNoChannelAvailable) {
+		t.Fatalf("期望 ErrNoChannelAvailable，实际 %v", err)
+	}
+	// 排除原因要带进错误里：不然调用方只知道「不行」，不知道为什么不行
+	if !strings.Contains(err.Error(), "金额高于单笔上限") {
+		t.Errorf("错误信息里没有排除原因: %v", err)
+	}
+	if called {
+		t.Error("拒单了就不该调渠道")
+	}
+}
+
+// Shadow 下「没有可用通道」不拦支付，但要把原因带回去 —— 那是「为什么中台不同意」的答案
+func TestShadowContinuesWhenNoChannelAvailable(t *testing.T) {
+	f := newFakeHub(t, "sk_test")
+	f.routeChannel = ""
+	f.rejected = []RouteRejected{{ChannelNo: "000001", Rejection: "INACTIVE", Reason: "通道已停用"}}
+	hub, srv, _ := newTestHub(t, ModeShadow, f)
+	defer srv.Close()
+
+	called := false
+	var seen Decision
+	out, err := hub.Deposit(context.Background(), intent(), okExec(&called, &seen))
+	if err != nil {
+		t.Fatalf("Shadow 下不该因为选道结论拒单: %v", err)
+	}
+	if !called {
+		t.Error("Shadow 下必须照原来的通道执行")
+	}
+	if seen.ChannelNo != "000001" {
+		t.Errorf("应当仍用调用方选的通道，实际 %q", seen.ChannelNo)
+	}
+	found := false
+	for _, e := range out.SuppressedErrors {
+		if strings.Contains(e.Error(), "通道已停用") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("排除原因没有带回给调用方: %v", out.SuppressedErrors)
 	}
 }

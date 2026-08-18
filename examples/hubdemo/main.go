@@ -261,7 +261,6 @@ func (f *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/gateway/route":
 		_ = json.NewEncoder(w).Encode(platform.RouteReply{
 			ChannelNo: "000001", BaseEndpoint: "https://fake-channel.example.com",
-			CallbackURL: "https://hub.example.com/callback/000001/M100001",
 			Candidates: []platform.RouteCandidate{
 				{ChannelNo: "000001", Score: 0.92, Reason: "成功率最高"},
 				{ChannelNo: "000002", Score: 0.71, Reason: "备选"},

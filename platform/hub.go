@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -107,6 +108,12 @@ type Outcome struct {
 // ErrHubUnavailable 是 Enforce 模式下拒单的原因之一。
 var ErrHubUnavailable = errors.New("payment hub unavailable")
 
+// ErrNoChannelAvailable 表示中台的准入把所有通道都排除了。
+//
+// 与 ErrHubUnavailable 分开：这个错误**重试没有意义**（限额、币种对、凭据这些
+// 不会因为再问一次而改变），而前者是暂时性的。调用方据此决定要不要重试。
+var ErrNoChannelAvailable = errors.New("no channel available")
+
 // Deposit 走一遍完整链路。
 //
 // 三档模式的差别集中在这一个函数里，刻意不拆成三份实现 —— 拆开之后
@@ -140,6 +147,20 @@ func (h *Hub) Deposit(ctx context.Context, in DepositIntent, exec ExecuteFunc) (
 		out.SuppressedErrors = append(out.SuppressedErrors, err)
 		// 选道是可降级的：拿不到就用调用方自己的选择，但要打降级标记
 		d.Degraded = true
+	} else if route.ChannelNo == "" {
+		/*
+		 * 中台明确说了「没有可用通道」（准入全被排除），这与「中台不可用」不是一回事：
+		 * 前者是业务结论，重试也还是这个结果，拿它降级执行等于无视中台的判断。
+		 *
+		 * Enforce 下必须拒单。Shadow 下仍按调用方自己的选择执行（它现在就这么跑着），
+		 * 但把排除原因带回去 —— 那正是「为什么中台不同意」的答案。
+		 */
+		d.Route = route
+		if enforce {
+			return nil, errors.Join(ErrNoChannelAvailable, errors.New(rejectedSummary(route.Rejected)))
+		}
+		out.SuppressedErrors = append(out.SuppressedErrors,
+			errors.New("中台认为没有可用通道："+rejectedSummary(route.Rejected)))
 	} else {
 		d.Route = route
 		if enforce {
@@ -385,6 +406,18 @@ func optDecimal(s *string) (*decimal.Decimal, error) {
 		return nil, &PricingError{msg: "手续费上下限不是合法数字：" + *s}
 	}
 	return &d, nil
+}
+
+// rejectedSummary 把排除原因压成一行，好放进错误信息里。
+func rejectedSummary(rejected []RouteRejected) string {
+	if len(rejected) == 0 {
+		return "中台没有给出排除原因"
+	}
+	parts := make([]string, 0, len(rejected))
+	for _, r := range rejected {
+		parts = append(parts, r.ChannelNo+" "+r.Reason)
+	}
+	return strings.Join(parts, "；")
 }
 
 func (h *Hub) reportOnce(ctx context.Context, d Decision, in DepositIntent, res ExecResult) error {
