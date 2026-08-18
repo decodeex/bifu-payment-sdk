@@ -21,18 +21,18 @@ type pricingVector struct {
 	Name  string `json:"name"`
 	Why   string `json:"why"`
 	Input struct {
-		Direction       string `json:"direction"`
-		BasePrice       string `json:"basePrice"`
-		FiatAmount      string `json:"fiatAmount"`
-		SpreadType      string `json:"spreadType"`
-		SpreadValue     string `json:"spreadValue"`
+		Direction       string  `json:"direction"`
+		BasePrice       string  `json:"basePrice"`
+		FiatAmount      string  `json:"fiatAmount"`
+		SpreadType      string  `json:"spreadType"`
+		SpreadValue     string  `json:"spreadValue"`
 		FeeFixed        string  `json:"feeFixed"`
 		FeeRatePercent  string  `json:"feeRatePercent"`
 		FeeMin          *string `json:"feeMin"`
 		FeeMax          *string `json:"feeMax"`
-		PricePrecision  int32  `json:"pricePrecision"`
-		AmountPrecision int32  `json:"amountPrecision"`
-		Rounding        string `json:"rounding"`
+		PricePrecision  int32   `json:"pricePrecision"`
+		AmountPrecision int32   `json:"amountPrecision"`
+		Rounding        string  `json:"rounding"`
 	} `json:"input"`
 	Expected struct {
 		DealPrice       string `json:"dealPrice"`

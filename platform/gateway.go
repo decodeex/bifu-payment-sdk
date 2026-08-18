@@ -123,9 +123,9 @@ type CreateOrderRequest struct {
 	// bifufx-api 的出金传的是账户币种（结算币）金额，入金传的是法币金额。
 	// 中台不给这一项默认值：默认对一半调用方是错的，而错的那一半是出金 ——
 	// 差一个汇率的量级，且请求内部自洽，复算也发现不了。
-	AmountSide string           `json:"amountSide"`
-	Pricing    PricingSnapshot  `json:"pricing"`
-	Gray       *GrayDecision    `json:"gray,omitempty"`
+	AmountSide string          `json:"amountSide"`
+	Pricing    PricingSnapshot `json:"pricing"`
+	Gray       *GrayDecision   `json:"gray,omitempty"`
 }
 
 // PriceCheck 是中台的复算结论。nil 表示**没有复算**（不是「复算通过」）。

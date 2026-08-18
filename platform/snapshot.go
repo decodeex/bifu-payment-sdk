@@ -47,17 +47,17 @@ type Channel struct {
 
 // FxVersion 是一份生效中的点差数值。
 type FxVersion struct {
-	VersionNo    int    `json:"versionNo"`
-	SpreadType   string `json:"spreadType"` // BPS | FIXED
-	SpreadValue  string `json:"spreadValue"`
-	FeeFixed     string `json:"feeFixed"`
-	FeeRate      string `json:"feeRate"`
+	VersionNo   int    `json:"versionNo"`
+	SpreadType  string `json:"spreadType"` // BPS | FIXED
+	SpreadValue string `json:"spreadValue"`
+	FeeFixed    string `json:"feeFixed"`
+	FeeRate     string `json:"feeRate"`
 	// 单笔手续费下限 / 上限，nil = 不限制。建单快照里必须原样带上，否则中台复算会误报
 	FeeMin       *string `json:"feeMin"`
 	FeeMax       *string `json:"feeMax"`
-	RoundingMode string `json:"roundingMode"`
-	PriceScale   int    `json:"priceScale"`
-	AmountScale  int    `json:"amountScale"`
+	RoundingMode string  `json:"roundingMode"`
+	PriceScale   int     `json:"priceScale"`
+	AmountScale  int     `json:"amountScale"`
 }
 
 // FxRule 是某个维度上生效的点差。MerchantNo 为空表示这是业务线的兜底规则。

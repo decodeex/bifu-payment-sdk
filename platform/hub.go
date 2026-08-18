@@ -67,7 +67,7 @@ type Decision struct {
 	Pricing *PricingSnapshot
 	// 本地算出的完整报价：毛额 / 手续费 / 净额 / 点差收益。
 	// 调用方拿它去调渠道 —— 渠道要的是净额还是毛额，因渠道而异
-	Quote      *QuoteResult
+	Quote *QuoteResult
 	// 中台的复算结论，建单时顺带返回。nil = 没复算
 	PriceCheck *PriceCheck
 	Route      *RouteReply
