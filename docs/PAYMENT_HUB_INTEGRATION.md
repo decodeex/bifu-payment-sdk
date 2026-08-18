@@ -69,10 +69,41 @@ ModeEnforce  按中台的决策执行。定价拿不到或建单失败一律拒�
 |---|---|---|
 | `GET /api/internal/config/snapshot` | ✅ **已上线** | 币种、通道（endpoint / 限额 / 币种对 / 日切）、生效点差 |
 | `GET /api/internal/config/fx` | ✅ **已上线** | 单维度点差，并告诉你命中的是商户级还是业务线兜底级 |
-| `POST /api/gateway/quote` | 🚧 开发中 | 报价 + 锁汇 |
-| `POST /api/gateway/route` | 🚧 开发中 | 选道，返回首选 + 候选 |
-| `POST /api/gateway/orders` | 🚧 开发中 | 建单，中台生成订单号 |
-| `POST /api/gateway/orders/{orderNo}/result` | 🚧 开发中 | 回传执行结果 |
+| `POST /api/gateway/route` | ✅ **已上线** | 选道，返回首选 + 候选 + **被排除的原因** |
+| `POST /api/gateway/orders` | ✅ **已上线** | 建单，中台生成订单号，顺带返回复算结论 |
+| `POST /api/gateway/orders/{orderNo}/result` | ✅ **已上线** | 回传执行结果 |
+
+### 2.1 ⚠️ 没有报价接口，成交价由 SDK 本地算
+
+这一节是这份方案 8 月 18 日的**实质变更**，请重点看。
+
+早先的设计里有一个 `POST /gateway/quote`：中台去调渠道取价、加上点差、
+返回一个签名的锁汇令牌，建单时带回去。**那个接口不会有了。**
+
+原因是分工变了：中台不碰渠道 API（它没有渠道凭据，也不该有），
+于是它没有独立的价格来源，报价接口无从实现。现在的分工是
+
+| 谁 | 负责 |
+|---|---|
+| 中台 | 点差配置（`/internal/config/fx`）、选道、订单号与状态机、事后复算 |
+| 渠道 | 实时汇率 |
+| **SDK** | **拿两者在本地算成交价** |
+
+对接入方的影响只有一处：`DepositIntent` 多一个 `Price` 回调，
+用来取渠道实时价（你们本来就在调这个渠道）。之所以是回调而不是一个价格字段：
+Enforce 模式下最终用哪条通道由中台选道决定，取价必须发生在选道**之后**。
+
+**定价一致性怎么保证**：SDK（Go + shopspring/decimal）与中台（TypeScript + decimal.js）
+读**同一份** `pricing-vectors.json`（本仓库 `platform/testdata/` 与中台
+`packages/domain/src/` 逐字节一致），两边断言同一批期望值。改这份文件等于改定价口径，
+两边的用例会同时红。这个机制已经抓出过两个真实的 Go 侧 bug（手续费多取了一次整、
+点差收益的基准少取了一次整）。
+
+**中台的复算不会拒单**：它没有独立价格来源，只能发现「两套实现算得不一样」，
+发现不了「有人故意报假价」。既然挡不住作假，拒单就只剩坏处 ——
+把 SDK 侧一个计算 bug 放大成全线停摆。所以复算不一致时中台照常建单，
+只在响应里给出结论（`priceCheck`）。**SDK 会把它报给 `Observer.OnError`，请务必接上告警**：
+它的含义是两套定价实现已经漂了，而这种问题不会自己好，且每一笔都在错。
 
 鉴权：商户 API Key + 时间戳 + HMAC-SHA256 签名，时间窗双向 5 分钟。
 **渠道侧的 App Secret 不下发**，渠道凭据仍然由调用方自己持有 ——
@@ -106,6 +137,21 @@ func (g *gateway) Deposit(ctx context.Context, ticket string, req *deposit.Reque
         SettlementCode:     req.ToCurrency,
         RequestAmount:      req.FromAmount.String(),
         PreferredChannelNo: g.hubChannelNo, // 你自己已经选好的通道
+
+        // 取渠道实时价。这里换成渠道自己的行情接口即可，
+        // 返回渠道**原样**的价 + 它的单位方向，不要在这里做任何换算 ——
+        // 换算与点差都由 SDK 按共用向量的口径做，多一处换算就多一处漂移点。
+        Price: func(ctx context.Context, channelNo string) (platform.ChannelPrice, error) {
+            r, err := g.client.MarketPriceRate(ctx) // 比如 BFT 的 market-price-rate
+            if err != nil {
+                return platform.ChannelPrice{}, err
+            }
+            return platform.ChannelPrice{
+                RawInPrice:  r.MarketInPrice,  // 6.7600
+                RawOutPrice: r.MarketOutPrice, // 6.6800
+                Orientation: platform.FiatPerSettlement, // 1 USDT = N CNY
+            }, nil
+        },
     }, func(ctx context.Context, d platform.Decision) (platform.ExecResult, error) {
         resp, err := g.client.BuyCoin(ctx, buildReq(ticket, req, u)) // ← 原来那一行，没变
         if err != nil {
@@ -128,6 +174,12 @@ func (g *gateway) Deposit(ctx context.Context, ticket string, req *deposit.Reque
 - `WillRetry` 需要你们填。**如果这笔失败之后还要换通道重试，必须置 `true`**：
   中台的终态不可逆，要重试却报了终态，这笔订单就永久死了
 - 一开始把 `Mode` 配成 `shadow`，`PreferredChannelNo` 继续填你们自己选的通道
+- `Orientation` **必须填对**，而且没有默认值。填错不会报错，只会让每一笔都用错价 ——
+  6.76 与 0.1479 差 45 倍，而两者都是「看起来合理」的汇率
+- `d.Quote` 里有本地算出的毛额 / 手续费 / 净额。渠道下单要的是净额还是毛额因渠道而异，
+  按你们各自渠道的口径取
+- `d.PriceCheck` 是中台的复算结论。`nil` 表示**没有复算**（不是「复算通过」），
+  比如金额是结算币侧、或者快照缺了复算需要的输入
 
 ---
 
@@ -139,11 +191,13 @@ platform/
   signer.go       HMAC-SHA256 签名，与中台逐字节一致
   client.go       Config / HTTP / 错误归一 / Observer
   snapshot.go     配置快照 + 单维度点差（对应中台已上线的两个接口）
-  gateway.go      quote / route / orders / result（对应中台开发中的四个接口）
+  gateway.go      route / orders / result（对应中台已上线的三个接口）
+  pricing.go      本地定价：点差 / 手续费 / 取整，与中台 money.ts 由向量钉住
   hub.go          三档模式的编排，就是 §3 里那个 Deposit
   insecure.go     自签证书开关，单独一个文件以便审查时显眼
-  *_test.go       14 条测试
+  *_test.go       33 条测试，覆盖率 83.9 %
   testdata/signature-vectors.json   ← 与中台共用的签名向量
+  testdata/pricing-vectors.json     ← 与中台共用的定价向量（15 条）
 examples/hubdemo/ 可直接跑的 MVP demo
 .github/workflows/ci.yml            ← 这个仓库原来没有 CI
 ```
@@ -181,29 +235,34 @@ Go 侧第一次跑就与中台的期望值全部一致。
 商户 M100001（业务线 bifu），生成于 2026-08-18T06:01:16.236Z
 币种 11 个，通道 1 条，点差规则 1 条
   通道 000003 zz-fx-e2e    入金=true 出金=true 币种对 2 个
-  点差 v42 CNY/USDT DEPOSIT 通道000003 点差=33(BPS) 手续费=1+0.1% 取整=HALF_UP [商户 M100001]
+  点差 v76 CNY/USDT DEPOSIT 通道000001 点差=33(BPS) 手续费=1+0.1% 取整=HALF_UP [商户 M100001]
 ✅ 快照里不含任何密钥字段（渠道凭据仍由业务线自己持有）
 
 === 2. 查单维度点差 GET /api/internal/config/fx ===
-命中层级 MERCHANT，生效版本 v42 点差 33(BPS)
+命中层级 MERCHANT，生效版本 v76 点差 33(BPS)
 
 === 3. 走一遍完整链路（Shadow 模式）===
-  ⚠️  [route] payment hub POST /api/gateway/route: status 404 ...
-  ⚠️  [quote] payment hub POST /api/gateway/quote: status 404 ...
-  → 假渠道下单：通道 000001，中台订单号 ""，成交价 ""，降级=true
-  结果：通道 000001，支付链接 https://fake-channel.example.com/pay/abc
+  → 假渠道下单：通道 000001，中台订单号 "ORD20260818000096"，成交价 "0.147441"，降级=false
+     本地算出：毛额 1061.58、手续费 2.06158、用户可得 1059.52
+     中台复算：一致=true（期望成交价 0.147441）
+  结果：通道 000001，中台订单号 "ORD20260818000096"，支付链接 https://fake-channel.example.com/pay/abc
+  中台候选：1 条
+  ✅ 全链路无错误
 ```
 
-这段输出正好把两件事都证明了：
+这段输出把四件事证明了：
 
-1. **签名与配置读取在真中台上是通的**（快照与点差都拿到了，且中台验签通过）
-2. **中台的 C 期接口还没上线（404），而 Shadow 模式把它吞了，支付照常完成** ——
-   这就是兼容性承诺的现场证据
+1. **签名与配置读取在真中台上是通的**（快照与点差都拿到了，中台验签通过）
+2. **选道 → 建单 → 回传三个接口都通了**，`降级=false` 说明一个都没走兜底
+3. **跨语言定价一致**：本地 Go 按商户级 33bps 算出 `0.147441`，
+   中台用 TypeScript 独立复算，结论一致。这不是「两边跑同一份代码」——
+   是两套实现读同一份向量、算同一笔单，得到同一个数
+4. 落库的 `price_orientation` / `fx_rule_version_id` / `amount_side` 都正确
+   （直接查了中台的库确认）
 
-demo 检测到 404 之后会自动切到内置假中台再跑一次，把 route → quote → orders →
-渠道 → 回传整条链路演示完整。
-
----
+> **前一版这份文档里贴的输出是 404 的**（当时 C 期接口还没上线，Shadow 把它吞了）。
+> 那段输出证明的是「兼容性承诺有效」；现在这段证明的是「链路真的通了」。
+> 两件事都成立，但不要拿旧的那段当现状。
 
 ## 6. 还没做的（排期）
 
@@ -214,8 +273,8 @@ demo 检测到 404 之后会自动切到内置假中台再跑一次，把 route 
 | ~~S3~~ | ~~三档模式编排 + MVP demo~~ ✅ | — |
 | **S4** | 落盘上报队列（进程重启不丢）+ 指数退避 + 死信 | 需要与你们确认存储选型 |
 | **S5** | 查单补偿：对停在「处理中」超过 T 的订单主动查单 | 依赖 S4；也依赖渠道查单能力（见 §7.2） |
-| **S6** | `bifufx-api` 侧接入（先 1 条通道跑 Shadow） | 需要中台 C3–C5 上线 |
-| **S7** | 出金链路 | 渠道文档 |
+| **S6** | `bifufx-api` 侧接入（先 1 条通道跑 Shadow） | **依赖已解除**，中台侧接口都上线了，可以开始 |
+| **S7** | 出金链路 | 渠道文档 + 两个待拍板的决定，见 §7.6 |
 
 S4 的存储刻意留成接口注入：SDK 不该替调用方选 BoltDB / SQLite / 你们自己的库。
 
@@ -242,19 +301,47 @@ endpoint 也没有限额的通道的成交价，用不了还看不出为什么�
 
 这两条决定了 C 期在 SDK 侧的实际工作量，排期时请一并考虑。
 
-### 7.3 中台缺一个字段：手续费上限
+### 7.3 手续费模型不只是缺一个字段（中台已改，但迁移要小心）
 
-`bifufx-api` 的 `CommonFiatDepositConfig` 里有：
+上一版这里写的是「中台缺 `feeMax`」。把 `withdrawal/config.go` 读完之后发现，
+问题比缺字段严重：**手续费的计算语义本身不一样**。
+
+你们的 `CalculateServiceFee`：
 
 ```go
-ServiceFeeFixed  decimal.Decimal  // 服务费固定值
-ServiceFeeRate   decimal.Decimal  // 服务费比例
-ServiceFeeMax    decimal.Decimal  // 服务费最大值   ← 中台没有对应字段
+if ServiceFeeFixed > 0 { return ServiceFeeFixed }   // 固定值优先，连上下限都不看
+fee := amount * ServiceFeeRate
+if fee > ServiceFeeMax { return ServiceFeeMax }
+if fee < ServiceFeeMin { return ServiceFeeMin }
 ```
 
-中台的点差版本有 `feeFixed` 与 `feeRate`，但**没有 `feeMax`**。
-如果现在线上真的在用「服务费上限」，那配置迁到中台之后这个能力会丢。
-麻烦确认一下这个字段现在有没有在用；要用的话我在中台补上。
+是**二选一 + 上下限**。中台原先是 `feeFixed + 毛额 × feeRate/100`，**相加、无上下限**。
+
+中台现在补了 `feeMin` / `feeMax`，保持相加骨架：二选一是相加的特例
+（固定值那一档把费率置 0 就等价），反过来则表达不了「固定 + 比例」。
+迁移变换是
+
+| 你们的配置 | 中台配置 |
+|---|---|
+| `Fixed > 0` | `feeFixed = Fixed`，`feeRate = 0`，上下限留空 |
+| `Fixed = 0, Rate > 0` | `feeFixed = 0`，`feeRate = Rate × 100`，`feeMin = Min`，`feeMax = Max` |
+
+**三件要请你们确认的事**（都不是代码能解决的）：
+
+1. **费率单位差 100 倍**。你们的 `ServiceFeeRate` 是小数（`exchangeFeeRate = 0.01` 表示 1%），
+   中台的 `feeRate` 是百分数（`0.1` 表示 0.1%）。迁移时要 ×100。
+2. 🔴 **`ServiceFeeMax` 的判断在 `ServiceFeeMin` 之前，且比的是 Go 零值**：
+   配了费率**但没配上限**的通道，`fee > 0` 成立 → **直接返回 0**。
+   也就是这些通道现在实际收 0 手续费。中台把「上限为空」解释成「不封顶」，
+   照搬过去这些通道会**从收 0 变成开始收费**，方向完全反了。
+   请帮忙核一下线上配置里 `rate > 0 且 max = 0` 的条目 —— 是「不封顶」还是「真的收 0」。
+3. **计费基数不同**。你们出金按**换汇前的账户币金额**算费（先扣费再换汇），
+   中台按**换算后的结算币毛额**算。同一笔单两种基数算出的手续费不同，
+   这个要拍板选一种。
+
+另外：`deposit/config.go` 里那组 `ServiceFee*` **没有任何调用方**
+（全仓 `CalculateServiceFee` 只有 withdrawal 在用，`biz/deposit.go` 明写「入金没有手续费」）。
+迁移时不要把它们搬进中台，否则入金会凭空开始扣费。
 
 ### 7.4 🔴 `.gitignore` 把所有测试文件都忽略掉了（已改）
 
@@ -294,15 +381,54 @@ ServiceFeeMax    decimal.Decimal  // 服务费最大值   ← 中台没有对应
 
 ---
 
+### 7.6 出金链路：不是「包一层」，是从零对接
+
+把 `bifufx-api` 的出金读完之后，S7 的工作量要重估。现在的出金是这么走的
+（`biz/withdrawal.go` 的 `handleWithdrawalV2`）：
+
+分布式锁 → 余额校验 → 算费 → **风控决策引擎**（`decision.CommonRule`，
+`EventCode=FIAT_WITHDRAW`，可判 refused / manual_review）→ 冻结资金 →
+建 `CapitalLog(pending)` → **发工单**（工单里存了完整收款账户快照）→
+审批通过后 Kafka 消费 `WithdrawApproveOrder` 落账。
+
+**渠道执行那一段不存在**：我全仓搜过，没有任何法币出金的渠道 API 调用。
+银行出金是人工 EFT；Peska 出金的执行方式代码里看不出来（推测渠道后台人工）；
+加密货币走 Cobo/ChainUp 托管。这个 SDK 的 10 个渠道包**全是入金**
+（`bft` `chippay` `peska` `ifp` `long77` `ragapay` `xpay` `asiabank` `help2pay` `mtpay`），
+查单能力只有 `peska` 与 `ifp` 两个有。
+
+也就是说出金**没有任何现成协议代码可以搬**，要按「新渠道对接」估工作量。
+另外两件必须先定的事：
+
+1. **审核归属**。中台设计里出金建单进 `PENDING_REVIEW`、在中台后台审核；
+   但你们已经有一套风控引擎 + 工单审批在跑。两套并存必然漂移。
+   是中台审，还是你们的工单系统通过中台接口代为审批（带上外部工单号）？
+   —— 这个我已经在中台的 P0 群里提了，等产品拍。
+2. **BFT / Chippay 到底有没有 payout API**？渠道文档我这边没拿到。
+   没有的话「一期做出金」就只能是「中台管审核与记录、执行仍然人工」。
+
+还有一个纯技术缺口：中台目前**没有查单接口**，出金审核通过之后
+（`PENDING_REVIEW → PROCESSING`）没有任何机制能让 SDK 知道。中台侧要补
+`GET /gateway/orders/{orderNo}`（或对业务线的回调），否则这笔会永远停在处理中。
+
+---
+
 ## 8. 需要你们拍板的
 
-1. **§7.3 的手续费上限**现在有没有在用？
+1. **§7.3 的三件事**：费率单位（×100）、`rate > 0 且 max = 0` 的条目到底是
+   「不封顶」还是「真的收 0」、以及手续费的计费基数（含费还是不含费金额）。
+   第二条最急 —— 它决定迁移会不会让一批通道从不收费变成开始收费。
 2. **§7.4 那行 `.gitignore`** 当初是有意为之吗？如果是，请告诉我原因，我换个方式放测试。
 3. **S4 上报队列的存储**用什么？（我倾向留成接口，由 `bifufx-api` 注入自己的库）
 4. `bifufx-api` 第一个跑 Shadow 的通道选哪条？建议挑量最小的一条。
 5. 渠道凭据的归属：目前方案是**继续由业务线自己持有**（中台不下发密钥）。
    中台侧还有一个待拍板的选项是「中台下发、SDK 只在内存持有」，
    那样商户在中台改密钥就能即时生效。你们更倾向哪种？
+6. **出金的审核归属**（§7.6 第 1 条）。这条我在中台的产品群里也提了，
+   但你们是实际持有工单系统的一方，意见更重要。
+7. 中台的选道会把「该商户在这条通道上没有录入凭据」当**硬性排除**。
+   凭据本身不下发，它在中台的存在等于一条「开通登记」。
+   接入前请确认要跑的通道在中台后台都登记过 —— 否则选道会一条都不给。
 
 ---
 
