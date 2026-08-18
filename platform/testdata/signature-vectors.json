@@ -1,0 +1,66 @@
+{
+  "//": "跨语言签名一致性向量。中台（TypeScript）与 bifu-payment-sdk（Go）读同一份文件。改这个文件等于改协议——两边的用例会同时红。",
+  "algorithm": "canonical = METHOD + LF + path(含 query) + LF + timestamp(Unix 毫秒) + LF + hex(sha256(body)); signature = hex(hmac_sha256(secret, canonical))",
+  "vectors": [
+    {
+      "name": "GET 空 body",
+      "secret": "sk_test_0123456789abcdef",
+      "method": "GET",
+      "path": "/api/internal/config/snapshot",
+      "timestamp": 1770000000000,
+      "body": "",
+      "why": "最基础的一条。GET 的 body 是空串，不是 \"null\" 也不是省略",
+      "expected": "61f780bd420403e0f0d791d2cfa6e2659d5f6b59d248d924cec0607d535980d7"
+    },
+    {
+      "name": "GET 带 query —— path 必须包含 query",
+      "secret": "sk_test_0123456789abcdef",
+      "method": "GET",
+      "path": "/api/internal/config/fx?channelNo=000001&fiatCode=CNY&settlementCode=USDT&direction=DEPOSIT",
+      "timestamp": 1770000000000,
+      "body": "",
+      "why": "Go 侧要用 u.RequestURI() 而不是 u.Path。少了 query，一个签名能打任意参数",
+      "expected": "ef577d9e3404046203913804a6a43ab7e608104b8af4bffe7a1fafadd0b87023"
+    },
+    {
+      "name": "POST JSON body",
+      "secret": "sk_test_0123456789abcdef",
+      "method": "POST",
+      "path": "/api/gateway/quote",
+      "timestamp": 1770000000000,
+      "body": "{\"amount\":\"100.5\",\"fiatCode\":\"CNY\"}",
+      "why": "body 签的是原文字节。两次 marshal 出来的字段顺序可能不同，必须复用同一份 buffer",
+      "expected": "7637651c582b171344545c9a6fc672ffff08dbe5e858642114eb1eef20ed5d7c"
+    },
+    {
+      "name": "大写方法名归一",
+      "secret": "sk_test_0123456789abcdef",
+      "method": "post",
+      "path": "/api/gateway/quote",
+      "timestamp": 1770000000000,
+      "body": "{}",
+      "why": "method 先 toUpperCase 再进 canonical。Go 侧别忘了 strings.ToUpper",
+      "expected": "3e2531b19fdd6b10e98248a5a68b09ef7a7a7b597f26f1bc66f83debac764e3f"
+    },
+    {
+      "name": "非 ASCII body",
+      "secret": "sk_test_0123456789abcdef",
+      "method": "POST",
+      "path": "/api/gateway/orders",
+      "timestamp": 1770000000000,
+      "body": "{\"remark\":\"测试备注\"}",
+      "why": "body 一律按 UTF-8 取字节。Go 的 []byte(s) 天然是 UTF-8，但如果中间过了一次转码就会错",
+      "expected": "6348166ce31ed2c8d20d9841c283e2905bdf0cad236d47864e0ee869e213fabb"
+    },
+    {
+      "name": "密钥含非 ASCII",
+      "secret": "sk_密钥_测试",
+      "method": "GET",
+      "path": "/api/internal/config/snapshot",
+      "timestamp": 1770000000000,
+      "body": "",
+      "why": "HMAC 的 key 也按 UTF-8 取字节",
+      "expected": "cfcb475017112e05763741eb43d19a182fb0e4b478dbdb951910fc99b1552cf5"
+    }
+  ]
+}

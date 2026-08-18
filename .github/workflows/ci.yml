@@ -1,0 +1,49 @@
+name: ci
+
+# 这个仓库原来没有 CI。加上它的直接理由：本仓库已经破坏过一次调用方
+# （v0.0.8 对 bft 不兼容，bifufx-api 至今还钉着旧 module 的 v0.0.5），
+# 而那种问题 go build 一跑就能发现。
+#
+# ⚠️ gofmt 与 go vet 目前**只对新增的 platform / examples 生效**，不是全仓。
+# 原因：现有渠道包本身就没通过这两项（gofmt 有十几个文件未格式化，
+# go vet 在 xpay/fund_in.go 报「struct field 有 json tag 但没导出」）。
+# 全仓开门禁会立刻红，而为了过门禁去批量改那些文件，就违背了本次改动
+# 「只加不改、不碰现有渠道包」的兼容性承诺。
+#
+# 那些历史问题值得单独一个 PR 收掉（尤其 xpay 那几个 —— json tag 打在
+# 未导出字段上是不生效的，很可能是个真 bug），但不该混在这次改动里。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 跟着调用方 bifufx-api 的 go 1.24.x 走，避免「SDK 能编译、调用方编译不过」
+          go-version: '1.24'
+          cache: true
+
+      # 全仓构建：这一项就能挡住「破坏调用方」那类问题
+      - name: go build (全仓)
+        run: go build ./...
+
+      - name: go vet (新增代码)
+        run: go vet ./platform/... ./examples/...
+
+      - name: gofmt (新增代码)
+        run: |
+          unformatted="$(gofmt -l ./platform ./examples)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化，请跑 gofmt -w ："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go test (全仓)
+        run: go test -race ./...
