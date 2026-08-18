@@ -4,9 +4,10 @@
 //
 //  1. 用商户凭据拉一次配置快照（中台 B7，**已上线**）
 //  2. 查一个维度的生效点差（同上）
-//  3. 走一遍完整新链路：选道 → 报价 → 建单 → 调渠道（这里用假渠道）→ 回传
-//     （中台 C 期接口，**还在开发**。真中台上会 404，这时 demo 会自动切到
-//     内置的假中台，让整条链路仍然可以完整跑通并观察）
+//  3. 走一遍完整新链路：选道 → **本地算价**（中台点差 + 渠道实时价）→ 建单
+//     → 调渠道（这里用假渠道）→ 回传
+//     （建单与回传中台已上线；选道接口还在开发，打不通时会自动降级并打标记。
+//     真中台上任一接口 404，demo 会切到内置假中台，让整条链路仍然可以跑通并观察）
 //
 // 跑法：
 //
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/decodeex/bifu-payment-sdk/platform"
+	"github.com/shopspring/decimal"
 )
 
 type logObserver struct{}
@@ -175,10 +177,30 @@ func deposit(ctx context.Context, hub *platform.Hub) (*platform.Outcome, error) 
 		SettlementCode:     "USDT",
 		RequestAmount:      "7200",
 		PreferredChannelNo: "000001",
+		// 取渠道实时价。真实接入时这里换成渠道自己的行情接口，
+		// 比如 BFT 的 POST /coin/pay/query/market-price-rate（返回 6.76 / 6.68）。
+		//
+		// 注意返回的是渠道**原样**的价 + 它的单位方向，不要在这里换算：
+		// 换算与点差都由 SDK 按共用向量的口径做，多一处换算就多一处漂移点。
+		Price: func(_ context.Context, channelNo string) (platform.ChannelPrice, error) {
+			return platform.ChannelPrice{
+				RawInPrice:  decimal.RequireFromString("6.7600"),
+				RawOutPrice: decimal.RequireFromString("6.6800"),
+				Orientation: platform.FiatPerSettlement,
+			}, nil
+		},
 	}, func(_ context.Context, d platform.Decision) (platform.ExecResult, error) {
 		// ↓↓↓ 这里原本是 g.client.Checkout(ctx, req) 之类的一行 ↓↓↓
 		fmt.Printf("  → 假渠道下单：通道 %s，中台订单号 %q，成交价 %q，降级=%v\n",
 			d.ChannelNo, d.OrderNo, d.DealPrice, d.Degraded)
+		if d.Quote != nil {
+			fmt.Printf("     本地算出：毛额 %s、手续费 %s、用户可得 %s\n",
+				d.Quote.GrossCrypto, d.Quote.Fee, d.Quote.NetCrypto)
+		}
+		if d.PriceCheck != nil {
+			fmt.Printf("     中台复算：一致=%v（期望成交价 %s）\n",
+				d.PriceCheck.OK, d.PriceCheck.ExpectedDealPrice)
+		}
 		paidAt := time.Now()
 		return platform.ExecResult{
 			ChannelOrderNo:   "CH-DEMO-0001",
@@ -230,7 +252,11 @@ func (f *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(platform.FxConfig{
 			MatchedLevel: "BUSINESS_LINE", ChannelNo: "000001", FiatCode: "CNY",
 			SettlementCode: "USDT", Direction: "DEPOSIT",
-			Full: &platform.FxVersion{VersionNo: 1, SpreadType: "BPS", SpreadValue: "30"},
+			Full: &platform.FxVersion{
+				VersionNo: 1, SpreadType: "BPS", SpreadValue: "30",
+				FeeFixed: "1", FeeRate: "0.1", RoundingMode: "HALF_UP",
+				PriceScale: 6, AmountScale: 2,
+			},
 		})
 	case r.URL.Path == "/api/gateway/route":
 		_ = json.NewEncoder(w).Encode(platform.RouteReply{
@@ -241,15 +267,12 @@ func (f *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				{ChannelNo: "000002", Score: 0.71, Reason: "备选"},
 			},
 		})
-	case r.URL.Path == "/api/gateway/quote":
-		_ = json.NewEncoder(w).Encode(platform.QuoteReply{
-			QuoteToken: "v1.eyJkZW1vIjp0cnVlfQ.sig", ChannelNo: "000001",
-			DealPrice: "0.138472", BasePrice: "0.138889", FeeAmount: "1.997", FxVersionNo: 1,
-			ExpiresAtUnixMs: time.Now().Add(3 * time.Minute).UnixMilli(),
-		})
+	// 这里原来还有一个 /api/gateway/quote。中台没有独立的渠道价来源，
+	// 那个接口不存在了 —— 成交价由 SDK 本地算（见中台设计 §4.0）
 	case r.URL.Path == "/api/gateway/orders":
 		_ = json.NewEncoder(w).Encode(platform.CreateOrderReply{
 			OrderNo: "ORD-DEMO-0001", TxnNo: "PAY-DEMO-0001", Status: "PENDING_PAY",
+			PriceCheck: &platform.PriceCheck{OK: true, ExpectedDealPrice: "0.147485"},
 		})
 	case strings.HasPrefix(r.URL.Path, "/api/gateway/orders/") && strings.HasSuffix(r.URL.Path, "/result"):
 		body := map[string]any{}

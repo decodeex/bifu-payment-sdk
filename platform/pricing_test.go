@@ -26,8 +26,10 @@ type pricingVector struct {
 		FiatAmount      string `json:"fiatAmount"`
 		SpreadType      string `json:"spreadType"`
 		SpreadValue     string `json:"spreadValue"`
-		FeeFixed        string `json:"feeFixed"`
-		FeeRatePercent  string `json:"feeRatePercent"`
+		FeeFixed        string  `json:"feeFixed"`
+		FeeRatePercent  string  `json:"feeRatePercent"`
+		FeeMin          *string `json:"feeMin"`
+		FeeMax          *string `json:"feeMax"`
 		PricePrecision  int32  `json:"pricePrecision"`
 		AmountPrecision int32  `json:"amountPrecision"`
 		Rounding        string `json:"rounding"`
@@ -40,6 +42,17 @@ type pricingVector struct {
 		SpreadRevenue   string `json:"spreadRevenue"`
 		PlatformRevenue string `json:"platformRevenue"`
 	} `json:"expected"`
+}
+
+// mustOptDec 处理向量里可空的上下限。老向量根本没有这两个键，
+// 解出来是 nil —— 也就是「不限制」，与中台侧 undefined 归成 null 的处理一致。
+func mustOptDec(t *testing.T, s *string) *decimal.Decimal {
+	t.Helper()
+	if s == nil || *s == "" {
+		return nil
+	}
+	d := mustDec(t, *s)
+	return &d
 }
 
 func mustDec(t *testing.T, s string) decimal.Decimal {
@@ -76,6 +89,8 @@ func TestPricingVectors(t *testing.T) {
 				SpreadValue:     mustDec(t, v.Input.SpreadValue),
 				FeeFixed:        mustDec(t, v.Input.FeeFixed),
 				FeeRatePercent:  mustDec(t, v.Input.FeeRatePercent),
+				FeeMin:          mustOptDec(t, v.Input.FeeMin),
+				FeeMax:          mustOptDec(t, v.Input.FeeMax),
 				PricePrecision:  v.Input.PricePrecision,
 				AmountPrecision: v.Input.AmountPrecision,
 				Rounding:        RoundingMode(v.Input.Rounding),

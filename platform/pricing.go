@@ -64,6 +64,15 @@ type QuoteInput struct {
 	FeeFixed decimal.Decimal
 	// 手续费百分比部分，0.1 表示 0.1%（不是 0.001）
 	FeeRatePercent decimal.Decimal
+	// 单笔手续费下限 / 上限，以结算币计价。nil = 不限制。
+	//
+	// 这两项对齐 bifufx-api 的 ServiceFeeMin / ServiceFeeMax。中台原先没有它们，
+	// 业务线现有的出金配置直接迁过去会让小额单少收、大额单超收。
+	//
+	// **必须从中台的点差配置里原样带过来**：中台复算时按配置里的上下限算，
+	// 这边不夹取就会稳定差一个夹取，每一笔都被标成异常。
+	FeeMin *decimal.Decimal
+	FeeMax *decimal.Decimal
 	// 成交价精度
 	PricePrecision int32
 	// 结算币金额精度
@@ -141,8 +150,22 @@ func dealPriceOf(i QuoteInput, sign int64) (decimal.Decimal, error) {
 // 我第一版按「手续费也取整」写，跨语言向量立刻抓出来了：amountPrecision=2 时
 // 期望的 fee 是 0.044426，我算出 0.04。这种差异单看代码完全看不出对错 ——
 // 两边都「很合理」，只有对着同一份向量跑才知道谁是标准。
-func calcFee(gross decimal.Decimal, i QuoteInput) decimal.Decimal {
-	return i.FeeFixed.Add(gross.Mul(i.FeeRatePercent.Div(decimal.NewFromInt(100))))
+// 夹取作用在**手续费总额**上，不是只夹比例那一部分：迁移过来的配置 FeeFixed 必为 0
+// （两种口径等价），而「单笔最多收 X」对客解释得通。中台 money.ts 同一口径，
+// 向量里有一条专门区分这两种解释。
+func calcFee(gross decimal.Decimal, i QuoteInput) (decimal.Decimal, error) {
+	if i.FeeMin != nil && i.FeeMax != nil && i.FeeMin.GreaterThan(*i.FeeMax) {
+		return decimal.Decimal{}, &PricingError{msg: "手续费下限大于上限：" +
+			i.FeeMin.String() + " > " + i.FeeMax.String() + "，请检查手续费配置"}
+	}
+	fee := i.FeeFixed.Add(gross.Mul(i.FeeRatePercent.Div(decimal.NewFromInt(100))))
+	if i.FeeMax != nil && fee.GreaterThan(*i.FeeMax) {
+		fee = *i.FeeMax
+	}
+	if i.FeeMin != nil && fee.LessThan(*i.FeeMin) {
+		fee = *i.FeeMin
+	}
+	return fee, nil
 }
 
 // baselineGross 不加点差时的毛额，用来算点差收入。
@@ -168,7 +191,10 @@ func QuoteDeposit(i QuoteInput) (*QuoteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	fee := calcFee(gross, i)
+	fee, err := calcFee(gross, i)
+	if err != nil {
+		return nil, err
+	}
 	net, err := quantize(gross.Sub(fee), i.AmountPrecision, i.Rounding)
 	if err != nil {
 		return nil, err
@@ -199,7 +225,10 @@ func QuoteWithdraw(i QuoteInput) (*QuoteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	fee := calcFee(gross, i)
+	fee, err := calcFee(gross, i)
+	if err != nil {
+		return nil, err
+	}
 	net, err := quantize(gross.Add(fee), i.AmountPrecision, i.Rounding)
 	if err != nil {
 		return nil, err

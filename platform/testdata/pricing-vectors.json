@@ -1,6 +1,6 @@
 {
   "//": "跨语言定价向量。中台（TypeScript + decimal.js）与 bifu-payment-sdk（Go + shopspring/decimal）读同一份文件、断言同一批期望值。算价在 SDK 侧发生，所以两套实现必须一致——这份文件就是钉子。改它等于改定价口径，两边的用例会同时红。",
-  "algorithm": "入金：成交价 = 底价 × (1 − 点差/10000)（FIXED 时为 底价 − 点差）；出金反向。毛额 = 法币金额 × 成交价，按 amountPrecision 取整；手续费 = feeFixed + 毛额 × feeRatePercent/100，同样取整；入金净额 = 毛额 − 手续费，出金净额 = 毛额 + 手续费。",
+  "algorithm": "入金：成交价 = 底价 × (1 − 点差/10000)（FIXED 时为 底价 − 点差）；出金反向。毛额 = 法币金额 × 成交价，按 amountPrecision 取整；手续费 = feeFixed + 毛额 × feeRatePercent/100，再夹进 [feeMin, feeMax]（缺省为不限制），手续费本身**不取整**——它要和毛额一起参与净额计算，中间再取一次整会让净额多错一个最小单位；入金净额 = 取整(毛额 − 手续费)，出金净额 = 取整(毛额 + 手续费)。",
   "vectors": [
     {
       "name": "BFT 实测价 · 入金 · 30bps · 手续费 1+0.1%",
@@ -264,6 +264,110 @@
         "netCrypto": "146889.84",
         "spreadRevenue": "666",
         "platformRevenue": "1039.1575"
+      }
+    },
+    {
+      "name": "出金 · 比例手续费触及上限",
+      "why": "业务方 withdrawal/config.go 的 ServiceFeeMax 迁过来的形状：只有比例、有上限。1500×1% = 15 被上限 10 夹住",
+      "input": {
+        "direction": "WITHDRAW",
+        "basePrice": "0.15",
+        "spreadType": "BPS",
+        "spreadValue": "0",
+        "pricePrecision": 6,
+        "amountPrecision": 2,
+        "rounding": "HALF_UP",
+        "fiatAmount": "10000",
+        "feeFixed": "0",
+        "feeRatePercent": "1",
+        "feeMin": null,
+        "feeMax": "10"
+      },
+      "expected": {
+        "dealPrice": "0.15",
+        "grossCrypto": "1500",
+        "fee": "10",
+        "netCrypto": "1510",
+        "spreadRevenue": "0",
+        "platformRevenue": "10"
+      }
+    },
+    {
+      "name": "入金 · 比例手续费低于下限",
+      "why": "ServiceFeeMin 迁过来的形状。小额单 15×1% = 0.15 被下限 1 顶起来——不补下限的话小额单会少收",
+      "input": {
+        "direction": "DEPOSIT",
+        "basePrice": "0.15",
+        "spreadType": "BPS",
+        "spreadValue": "0",
+        "pricePrecision": 6,
+        "amountPrecision": 2,
+        "rounding": "HALF_UP",
+        "fiatAmount": "100",
+        "feeFixed": "0",
+        "feeRatePercent": "1",
+        "feeMin": "1",
+        "feeMax": null
+      },
+      "expected": {
+        "dealPrice": "0.15",
+        "grossCrypto": "15",
+        "fee": "1",
+        "netCrypto": "14",
+        "spreadRevenue": "0",
+        "platformRevenue": "1"
+      }
+    },
+    {
+      "name": "出金 · 固定值挡住比例（业务方「二选一」的迁移等价形态）",
+      "why": "业务方 CalculateServiceFee 在 ServiceFeeFixed>0 时只收固定值、连上下限都不看。迁移规则是把 feeRatePercent 置 0——这条向量就是那条规则的可执行证明：中台「相加」算出来同样是 5",
+      "input": {
+        "direction": "WITHDRAW",
+        "basePrice": "0.15",
+        "spreadType": "BPS",
+        "spreadValue": "0",
+        "pricePrecision": 6,
+        "amountPrecision": 2,
+        "rounding": "HALF_UP",
+        "fiatAmount": "10000",
+        "feeFixed": "5",
+        "feeRatePercent": "0",
+        "feeMin": null,
+        "feeMax": null
+      },
+      "expected": {
+        "dealPrice": "0.15",
+        "grossCrypto": "1500",
+        "fee": "5",
+        "netCrypto": "1505",
+        "spreadRevenue": "0",
+        "platformRevenue": "5"
+      }
+    },
+    {
+      "name": "入金 · 上限夹的是手续费总额，不是只夹比例部分",
+      "why": "固定 8 + 比例 15 = 23，上限 20 → 收 20。如果只夹比例那一部分会收 8+15=23。这条向量把口径钉死，免得两侧实现各选一种",
+      "input": {
+        "direction": "DEPOSIT",
+        "basePrice": "0.15",
+        "spreadType": "BPS",
+        "spreadValue": "0",
+        "pricePrecision": 6,
+        "amountPrecision": 2,
+        "rounding": "HALF_UP",
+        "fiatAmount": "10000",
+        "feeFixed": "8",
+        "feeRatePercent": "1",
+        "feeMin": null,
+        "feeMax": "20"
+      },
+      "expected": {
+        "dealPrice": "0.15",
+        "grossCrypto": "1500",
+        "fee": "20",
+        "netCrypto": "1480",
+        "spreadRevenue": "0",
+        "platformRevenue": "20"
       }
     }
   ]

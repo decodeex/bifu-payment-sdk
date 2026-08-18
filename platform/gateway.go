@@ -5,45 +5,22 @@ import (
 	"fmt"
 )
 
-// 在线决策接口（中台 C 期，正在开发中）。
+// 在线决策接口（中台 C 期）。
 //
-// 这四个接口是「在线决策 + 结果回传」这个架构的落点：中台出决策与订单号，
-// SDK 用自己的渠道 key 去调渠道，调完把结果回传。渠道调用**不过中台**。
+// 分工：中台出**选道决策**与**订单号**并持有状态机；点差配置从中台读，
+// **成交价在本地算**；SDK 用自己的渠道 key 调渠道，调完把结果回传。
+// 渠道调用**不过中台**。
 //
-// ⚠️ C 期尚未上线。本包已按契约实现，可以对着假中台（platform 的测试里就有一个）
-// 完整跑通；对着真中台要等 C3–C5 部署。
-
-// QuoteRequest 报价 + 锁汇。
-type QuoteRequest struct {
-	ChannelNo      string `json:"channelNo,omitempty"` // 留空 = 让中台选道
-	FiatCode       string `json:"fiatCode"`
-	SettlementCode string `json:"settlementCode"`
-	Direction      string `json:"direction"`
-	RequestAmount  string `json:"requestAmount"`
-}
-
-// QuoteReply 里的 QuoteToken 是一个签名的自包含令牌，建单时原样带回去。
+// # 为什么没有 Quote / 锁汇接口
 //
-// 中台刻意不建 quote 表：报价绝大多数不会成单，建表等于写一堆几分钟后没人看的行。
-// 防篡改靠签名、防过期靠令牌里的有效期、防重复成交靠中台侧 quote_id 的唯一索引。
-type QuoteReply struct {
-	QuoteToken      string `json:"quoteToken"`
-	ChannelNo       string `json:"channelNo"`
-	DealPrice       string `json:"dealPrice"`
-	BasePrice       string `json:"basePrice"`
-	FeeAmount       string `json:"feeAmount"`
-	FxVersionNo     int    `json:"fxVersionNo"`
-	Gray            bool   `json:"gray"`
-	ExpiresAtUnixMs int64  `json:"expiresAtUnixMs"`
-}
-
-func (c *Client) Quote(ctx context.Context, req QuoteRequest) (*QuoteReply, error) {
-	var out QuoteReply
-	if err := c.do(ctx, "POST", "/api/gateway/quote", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
+// 早期版本这里有一个 `POST /gateway/quote`：中台调渠道取价、加点差、
+// 返回一个签名的锁汇令牌，建单时带回去。那个设计被推翻了（见中台设计 §4.0）——
+// 中台不碰渠道 API，于是它没有独立的价格来源，报价接口就无从实现。
+// 现在的分工是：**中台给点差（`/internal/config/fx`）、渠道给实时价、SDK 本地算**。
+//
+// 这也意味着中台无法在下单环节挡住一个算错的价：它只能事后复算比对，
+// 而复算的输入正是 SDK 报上来的那些数。所以复算是**实现漂移的探测器，
+// 不是安全控制** —— 它刻意不拒单。定价正确性由两侧共用的 pricing-vectors.json 保证。
 
 // RouteRequest 选道。
 type RouteRequest struct {
@@ -78,19 +55,76 @@ func (c *Client) Route(ctx context.Context, req RouteRequest) (*RouteReply, erro
 	return &out, nil
 }
 
+// PricingSnapshot 是这一笔的定价快照：**算出来的结果 + 算它用的输入**，两组都要。
+//
+// 少了输入那一组（渠道原始价 + 单位方向 + 点差版本号），中台收到的成交价
+// 就是一个无法验证的数字，而复算是唯一能发现「两套定价实现漂移了」的手段。
+type PricingSnapshot struct {
+	// ---- 算它用的输入 ----
+	// 渠道原样返回的价，未做任何换算
+	ChannelRawPrice string `json:"channelRawPrice"`
+	// 上面那个数是哪个方向的。**没有默认值**，猜错就是资损
+	PriceOrientation string `json:"priceOrientation"`
+	// 用的是哪个点差版本，中台据此取当时的点差参数复算
+	FxRuleVersionNo int `json:"fxRuleVersionNo"`
+	// ---- 算出来的结果 ----
+	DealPrice string `json:"dealPrice"`
+	FeeAmount string `json:"feeAmount"`
+	// 当时生效的点差参数，冗余上报，便于事后不依赖版本表就看懂这一笔
+	SpreadType   string  `json:"spreadType"`
+	SpreadValue  string  `json:"spreadValue"`
+	FeeFixed     string  `json:"feeFixed"`
+	FeeRate      string  `json:"feeRate"`
+	FeeMin       *string `json:"feeMin"`
+	FeeMax       *string `json:"feeMax"`
+	RoundingMode string  `json:"roundingMode"`
+	PriceScale   int     `json:"priceScale"`
+	AmountScale  int     `json:"amountScale"`
+}
+
+// GrayDecision 这一笔算不算灰度。
+//
+// 命中判定在**本地**做：判定需要与定价用同一个版本，而定价已经在本地了。
+// ReleaseID 来自 `/internal/config/fx` 的 gray.releaseId —— 中台靠它把计数
+// 落到正确的发布上，填错或不填，灰度放量的验证数据就是空的。
+type GrayDecision struct {
+	Hit       bool    `json:"hit"`
+	ReleaseID *string `json:"releaseId"`
+}
+
 // CreateOrderRequest 建单。中台生成订单号并持有状态机。
 type CreateOrderRequest struct {
 	MerchantOrderNo string `json:"merchantOrderNo"`
-	QuoteToken      string `json:"quoteToken"`
 	ChannelNo       string `json:"channelNo"`
-	RequestAmount   string `json:"requestAmount"`
 	Direction       string `json:"direction"`
+	FiatCode        string `json:"fiatCode"`
+	SettlementCode  string `json:"settlementCode"`
+	RequestAmount   string `json:"requestAmount"`
+	// RequestAmount 是**哪一侧**的金额：FIAT | SETTLEMENT。**必填。**
+	//
+	// bifufx-api 的出金传的是账户币种（结算币）金额，入金传的是法币金额。
+	// 中台不给这一项默认值：默认对一半调用方是错的，而错的那一半是出金 ——
+	// 差一个汇率的量级，且请求内部自洽，复算也发现不了。
+	AmountSide string           `json:"amountSide"`
+	Pricing    PricingSnapshot  `json:"pricing"`
+	Gray       *GrayDecision    `json:"gray,omitempty"`
+}
+
+// PriceCheck 是中台的复算结论。nil 表示**没有复算**（不是「复算通过」）。
+type PriceCheck struct {
+	OK                bool    `json:"ok"`
+	ExpectedDealPrice string  `json:"expectedDealPrice"`
+	Reason            *string `json:"reason"`
 }
 
 type CreateOrderReply struct {
 	OrderNo string `json:"orderNo"`
 	TxnNo   string `json:"txnNo"`
 	Status  string `json:"status"`
+	// 是否命中了已有订单（幂等重放）。true 时不要重复发渠道请求
+	IdempotentReplay bool `json:"idempotentReplay"`
+	// 复算结论。**不影响建单成败**，但 OK=false 说明两侧定价实现已经漂了，必须告警
+	PriceCheck *PriceCheck `json:"priceCheck"`
 }
 
 func (c *Client) CreateOrder(ctx context.Context, req CreateOrderRequest) (*CreateOrderReply, error) {

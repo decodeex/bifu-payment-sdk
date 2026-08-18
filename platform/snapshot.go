@@ -52,6 +52,9 @@ type FxVersion struct {
 	SpreadValue  string `json:"spreadValue"`
 	FeeFixed     string `json:"feeFixed"`
 	FeeRate      string `json:"feeRate"`
+	// 单笔手续费下限 / 上限，nil = 不限制。建单快照里必须原样带上，否则中台复算会误报
+	FeeMin       *string `json:"feeMin"`
+	FeeMax       *string `json:"feeMax"`
 	RoundingMode string `json:"roundingMode"`
 	PriceScale   int    `json:"priceScale"`
 	AmountScale  int    `json:"amountScale"`
@@ -109,6 +112,9 @@ type FxConfig struct {
 // 这里的字段只用于观测与排查。
 type GrayFx struct {
 	FxVersion
+	// 灰度发布 id。建单时原样填进 gray.releaseId，中台据此把计数落到正确的发布上。
+	// 没有它就没法归属 —— 判出命中也白判
+	ReleaseID     string  `json:"releaseId"`
 	Scope         *string `json:"scope"`
 	Threshold     *int    `json:"threshold"`
 	ReleasedCount int     `json:"releasedCount"`
